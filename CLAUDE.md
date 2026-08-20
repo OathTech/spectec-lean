@@ -23,6 +23,23 @@ SpecTec EL early, to find where SpecTec's idioms fight Go. The OCaml frontend
 (EL parsing/elaboration) stays a black-box elaborator until late; port it
 last, if at all.
 
+## Build & run (environment is fully repo-local)
+
+```sh
+source scripts/env.sh                 # repo-local opam root (.opam/) + switch (_opam/)
+cd deps/spectec/spectec && make exe   # build ./spectec (OCaml 5.4.0)
+./spectec ../specification/wasm-3.0/*.spectec --check          # elaborate (~8 s)
+./spectec ../specification/wasm-3.0/*.spectec --ast -o out.sexpr    # IL S-expr dump
+./spectec ../specification/wasm-3.0/*.spectec --interpreter t.wast  # meta-interpreter
+```
+
+`deps/spectec-lean4-wip/` is a worktree of the `lean4-wip` branch; its
+`--lean4` target generates the (currently non-compiling, upstream-WIP)
+`test-lean4/Wasm.lean`. Setup record + sandbox notes:
+`docs/2026-08-20_ocaml-env-setup.md`. **Every `lake`/`lean` invocation goes
+through `scripts/capped`** (cgroup cap; `SPECTEC_MEM_MAX` to override,
+`=none` to opt out loudly) — `lean -M` and `prlimit` measured not to work.
+
 ## Machine-global state is forbidden
 
 This machine runs several agents. Never modify global state (~/.gitconfig,
@@ -63,10 +80,10 @@ authoritative corpus. Rules, from day one:
   the differential failing-set diff against a tracked baseline is the
   signal. Re-pin baselines only on a deliberate, explained coverage change,
   committed with the reason; never to launder a regression.
-- **Never run a Lean build uncapped.** Adopt the sibling `scripts/capped`
-  (cgroup MemoryMax; `lean -M` and `prlimit` measured NOT to work) before
-  the first heavy proof work. `#eval` a Bool before asking the kernel to
-  decide it. Heartbeat/maxRecDepth raises are by definition defects:
+- **Never run a Lean build uncapped** — `scripts/capped` exists; use it for
+  every `lake`/`lean` invocation (see Build & run). `#eval` a Bool before
+  asking the kernel to decide it. Heartbeat/maxRecDepth raises are by
+  definition defects:
   temporary, registered with an expected remover, or user-approved.
 
 ## Proof hygiene (when proofs start, from day one of them)
