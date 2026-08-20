@@ -97,6 +97,22 @@ SpecTec toolkit. Design rules:
 - Where the correspondence proof lives (golean imports this repo, or a
   third repo imports both) is deferred; nothing built now may prejudge it.
 
+**D5 — The EL elaborator is a named, untrusted-unverified boundary
+(recommended [AGENT], accepted [USER] 2026-08-20).** The OCaml frontend
+(EL parse + elaboration → IL) stays in the product path as a build tool,
+NOT a trust anchor: the Lean validator re-checks every dump structurally,
+and both differential legs check meaning end-to-end, so an elaborator bug
+surfaces as a loud rejection or a visible divergence — never a silent
+axiom. It is nevertheless the link between what humans audit (EL text)
+and what the theorem consumes (IL) — the analogue of go/types in golean —
+and is recorded as such. Eventual endpoint (luxe, deliberately
+unscheduled): an all-Lean frontend, staged parser-then-elaboration,
+gated by IL-dump BYTE-EQUALITY against the OCaml frontend (the arc-1
+round-trip machinery is the ready-made comparator), and sized only after
+the Go-EL prototype reveals the EL subset actually used. Permanent
+regardless: the OCaml toolchain never leaves the differential gate — its
+oracle role is an immovable boundary entry (CLAUDE.md).
+
 ## Staging impact
 
 Arc 2 (binding layer + IL validation + D3 dump patch) and arc 3 (semantic

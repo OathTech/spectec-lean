@@ -1,6 +1,7 @@
 # Arc 2 — the interpreter milestone (charter)
 
-Status: **DRAFT** (awaiting Mike's blessing). Branch:
+Status: **BLESSED** ([USER] Mike, 2026-08-20: "go ahead an bless the
+plan"; goal to be set by the user for the autonomous run). Branch:
 `arc2-interpreter-milestone` off `main` @ `4affb2f` (arc 1 merged).
 Supersedes the earlier "binding layer + validation" arc-2 sketch by
 absorbing it as stages 2-3 ([USER] 2026-08-20: reshape as a longer
