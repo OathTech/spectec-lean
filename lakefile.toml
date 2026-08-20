@@ -1,0 +1,14 @@
+name = "SpecTecLean"
+defaultTargets = ["SpecTecLean", "spectecil"]
+
+[[require]]
+name = "batteries"
+git = "https://github.com/leanprover-community/batteries"
+rev = "v4.33.0"
+
+[[lean_lib]]
+name = "SpecTecLean"
+
+[[lean_exe]]
+name = "spectecil"
+root = "Main"
