@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Apply the vendored spectec patches (patches/*.patch) to the pinned
+# deps/spectec checkout and rebuild the tool. Idempotent: already-applied
+# patches are detected and skipped. Fails closed on a pin mismatch or a
+# partial application. (Objective decision D3.)
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+pin=$(awk '$1=="spectec-commit"{print $2}' baselines/upstream-pins.txt)
+actual=$(git -C deps/spectec rev-parse HEAD)
+[ "$actual" = "$pin" ] || {
+  echo "apply-patches: deps/spectec at $actual, pinned $pin — refusing" >&2; exit 1; }
+
+for p in patches/*.patch; do
+  if git -C deps/spectec apply --check "$(pwd)/$p" 2>/dev/null; then
+    git -C deps/spectec apply "$(pwd)/$p"
+    echo "apply-patches: applied $p"
+  elif git -C deps/spectec apply --check --reverse "$(pwd)/$p" 2>/dev/null; then
+    echo "apply-patches: already applied $p"
+  else
+    echo "apply-patches: $p neither applies nor reverse-applies — checkout diverged" >&2
+    exit 1
+  fi
+done
+
+source scripts/env.sh
+( cd deps/spectec/spectec && make exe ) >/dev/null
+echo "apply-patches: spectec rebuilt"

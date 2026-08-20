@@ -2,8 +2,10 @@
 # explained decision committed with the reason (see CLAUDE.md).
 # Format: <key> <value>
 spectec-commit acc6e834ff403c82554d081237f327346190ad96
-wasm3-il-sexpr-sha256 aee3ca1af1b1004a4ea32f9c2779429fa755d0776e0a554510087336d69977e0
-# wasm-1.0/2.0 pins added 2026-08-20 (audit finding B8: extra corpora had
-# no content pin; the commit pin does not cover a dirty checkout)
-wasm1-il-sexpr-sha256 596d488fadbb83f1f83b1ba0c8b0c04be0648e81d2d14749d71a507e33c37da5
-wasm2-il-sexpr-sha256 fb980fa4b546d802c56d255c0c783718de2b20b1c99396e528fe2a75e12a739c
+# RE-PIN 2026-08-20 (arc 2 stage 1, decision D3): dumps switched to the
+# vendored patch's --ast-structured lossless format (structural
+# mixops/atoms, LetPr binders, def-level regions). The ci pin-check now
+# requires the deps worktree diff to equal patches/*.patch exactly.
+wasm3-il-sexpr-sha256 0afd355504097c2035973ef13b418103529757e91f6b779ee9b502ddf8ca3a39
+wasm1-il-sexpr-sha256 88f0caf6d1cadfc6d44abc0174f9f66bd16ad2a17f588cb8052dd838e8c7c52b
+wasm2-il-sexpr-sha256 cce2e6a91448e72df61b31d981eef5a01cf4ceb9ed82c55b5016a288fe5be4a3

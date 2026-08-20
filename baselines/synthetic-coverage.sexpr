@@ -6,4 +6,13 @@
 (def "synthNeg" nat (clause (num (nat 0)) (neg (if (bool false)))))
 (def "synthUn" int (clause (un minus int (un plus int (num (int +3))))))
 (typ "synthT" (inst (alias (iter nat list1))))
+(rel "synthMixA" (seq (a "x")) nat)
+(rel "synthMixB" (seq (a "x") %) nat)
+(rel "synthOp" (infix % (s sqarrow) %) nat)
+(rel "synthBk" (brack (s lbrack) % (s rbrack)) nat)
+(rel "synthR2" (a "R") nat (rule "r" (a "R") (num (nat 1))))
+(typ "synthS" (inst (struct (field (a "F") nat) (field (s dot) nat))))
+(def "synthDot" nat (clause (dot (var "s") (a "F"))))
+(def "sL" nat (clause (var "x") (let (exp "x" nat) (var "x") (num (nat 3)))))
+(def "synthAt" (at "f.spectec" 1 0 2 5) nat (clause (num (nat 1))))
 

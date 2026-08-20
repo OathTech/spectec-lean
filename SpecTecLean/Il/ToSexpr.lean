@@ -1,22 +1,26 @@
 import SpecTecLean.Sexpr
 import SpecTecLean.OcamlEscape
 import SpecTecLean.Il.Ast
-
 /-!
 IL → S-expression, a function-for-function mirror of
-`deps/spectec/spectec/src/backend-ast/print.ml` (spectec @ acc6e834).
-Together with `Sexpr.renderScript` this reproduces `--ast -o` output
+`deps/spectec/spectec/src/backend-ast/print.ml` at the pin PLUS the
+vendored patch `patches/0001-structured-ast-dump.patch` (D3), in its
+`--ast-structured` mode: structural atoms/mixops (`atom_sx`/`mixop_sx`),
+LetPr binders, and def-level `(at …)` regions. Together with
+`Sexpr.renderScript` this reproduces `--ast-structured -o` output
 byte-for-byte (gate requirement).
 
 Divergence note: `script` (print.ml:226-227) filters out the `Atom ""`
 that `HintD` prints as; our `Def` has no hint constructor (see Il/Ast.lean
 header), so there is nothing to filter.
 -/
+
 namespace SpecTecLean.Il
 
 open SpecTecLean (Sexpr)
+open SpecTecLean.Xl (Atom Mixop)
 
-/-! ## Literals (print.ml:9-20) -/
+/-! ## Literals (print.ml:9-20 + patch helpers) -/
 
 /-- print.ml:11 (`Bool.to_string`). -/
 def boolToSexpr (b : Bool) : Sexpr := .atom (if b then "true" else "false")
@@ -27,8 +31,34 @@ def textToSexpr (t : String) : Sexpr := .atom (OcamlEscape.quote t)
 /-- print.ml:13 `id`. -/
 def idToSexpr (x : Id) : Sexpr := textToSexpr x
 
-/-- print.ml:14 `mixop` (token, see Il/Ast.lean header). -/
-def mixopToSexpr (op : Mixop) : Sexpr := textToSexpr op
+/-- Patch `atom_sx`: `(a "s")` for atomids, `(s <name>)` for fixed
+constructors (Atom.name, xl/atom.ml:190-262). -/
+def atomToSexpr (a : Atom) : Sexpr :=
+  match a with
+  | .atom s => .node "a" [textToSexpr s]
+  | a =>
+    -- fixedName is `some` for every non-`atom` constructor (Xl.lean);
+    -- the default is unreachable and kept only for totality
+    .node "s" [.atom (a.fixedName.getD "?unreachable?")]
+
+/-- Patch `mixop_sx`. -/
+def mixopToSexpr (op : Mixop) : Sexpr :=
+  match op with
+  | .arg => .atom "%"
+  | .atom a => atomToSexpr a
+  | .brack l m r => .node "brack" [atomToSexpr l, mixopToSexpr m, atomToSexpr r]
+  | .infix m1 a m2 =>
+    .node "infix" [mixopToSexpr m1, atomToSexpr a, mixopToSexpr m2]
+  | .seq ms => .node "seq" (ms.attach.map (fun ⟨m, _⟩ => mixopToSexpr m))
+
+/-- Patch `at_sx`: `(at "file" l1 c1 l2 c2)` (OCaml `string_of_int`). -/
+def regionToSexpr (r : Region) : Sexpr :=
+  .node "at" [textToSexpr r.file, .atom (toString r.l1), .atom (toString r.c1),
+              .atom (toString r.l2), .atom (toString r.c2)]
+
+/-- Patch `ats`: the optional region child list. -/
+def atsToSexprs (at? : Option Region) : List Sexpr :=
+  (at?.map regionToSexpr).toList
 
 /-- print.ml:16-20 `num`. `int` always carries a sign (print.ml:18);
 `rat` is `num/den` (print.ml:19); `real` re-emits the raw token. -/
@@ -90,7 +120,7 @@ def hexByte (n : Nat) : String :=
   let s := String.ofList (digits.map Char.toUpper)
   "0x" ++ (if s.length < 2 then "0" ++ s else s)
 
-/-! ## The mutual core (print.ml:55-186) -/
+/-! ## The mutual core (print.ml:55-186, patched) -/
 
 mutual
 
@@ -125,11 +155,10 @@ def deftypToSexpr : DefTyp → Sexpr
   | .variantT tcs =>
     .node "variant" (tcs.attach.map (fun ⟨c, _⟩ => typcaseToSexpr c))
 
-/-- print.ml:89-90 `typfield` (atom printed via `mixop (Mixop.Atom at)`,
-identical to a mixop token here). -/
+/-- print.ml:89-90 `typfield` (atom structural, patched). -/
 def typfieldToSexpr : TypField → Sexpr
   | .mk at_ t qs prs =>
-    .node "field" ([mixopToSexpr at_, typToSexpr t]
+    .node "field" ([atomToSexpr at_, typToSexpr t]
       ++ qs.attach.map (fun ⟨q, _⟩ => paramToSexpr q)
       ++ prs.attach.map (fun ⟨p, _⟩ => premToSexpr p))
 
@@ -158,7 +187,7 @@ def expToSexpr : Exp → Sexpr
   | .extE e1 p e2 => .node "ext" [expToSexpr e1, pathToSexpr p, expToSexpr e2]
   | .strE efs =>
     .node "struct" (efs.attach.map (fun ⟨f, _⟩ => expfieldToSexpr f))
-  | .dotE e1 at_ => .node "dot" [expToSexpr e1, mixopToSexpr at_]
+  | .dotE e1 at_ => .node "dot" [expToSexpr e1, atomToSexpr at_]
   | .compE e1 e2 => .node "comp" [expToSexpr e1, expToSexpr e2]
   | .memE e1 e2 => .node "mem" [expToSexpr e1, expToSexpr e2]
   | .lenE e1 => .node "len" [expToSexpr e1]
@@ -183,17 +212,17 @@ def expToSexpr : Exp → Sexpr
     .node "sub" [typToSexpr t1, typToSexpr t2, expToSexpr e1]
   | .ifE e1 e2 e3 => .node "if" [expToSexpr e1, expToSexpr e2, expToSexpr e3]
 
-/-- print.ml:131-132 `expfield`. -/
+/-- print.ml:131-132 `expfield` (atom structural, patched). -/
 def expfieldToSexpr : ExpField → Sexpr
-  | .mk at_ e => .node "field" [mixopToSexpr at_, expToSexpr e]
+  | .mk at_ e => .node "field" [atomToSexpr at_, expToSexpr e]
 
-/-- print.ml:134-139 `path`. -/
+/-- print.ml:134-139 `path` (dot atom structural, patched). -/
 def pathToSexpr : Path → Sexpr
   | .rootP => .atom "root"
   | .idxP p e => .node "idx" [pathToSexpr p, expToSexpr e]
   | .sliceP p e1 e2 =>
     .node "slice" [pathToSexpr p, expToSexpr e1, expToSexpr e2]
-  | .dotP p at_ => .node "dot" [pathToSexpr p, mixopToSexpr at_]
+  | .dotP p at_ => .node "dot" [pathToSexpr p, atomToSexpr at_]
 
 /-- print.ml:141-142 `iterexp` (a LIST of sexprs, spliced by callers). -/
 def iterexpToSexprs : IterExp → List Sexpr
@@ -217,14 +246,16 @@ def symToSexpr : Sym → Sexpr
   | .iterG g1 ie => .node "iter" ([symToSexpr g1] ++ iterexpToSexprs ie)
   | .attrG e g1 => .node "attr" [expToSexpr e, symToSexpr g1]
 
-/-- print.ml:162-169 `prem`. -/
+/-- print.ml:162-169 `prem` (LetPr binders dumped, patched). -/
 def premToSexpr : Prem → Sexpr
   | .rulePr x args op e =>
     .node "rule" (idToSexpr x
       :: args.attach.map (fun ⟨a, _⟩ => argToSexpr a)
       ++ [mixopToSexpr op, expToSexpr e])
   | .ifPr e => .node "if" [expToSexpr e]
-  | .letPr e1 e2 => .node "let" [expToSexpr e1, expToSexpr e2]
+  | .letPr qs e1 e2 =>
+    .node "let" (qs.attach.map (fun ⟨q, _⟩ => paramToSexpr q)
+      ++ [expToSexpr e1, expToSexpr e2])
   | .elsePr => .atom "else"
   | .iterPr pr ie => .node "iter" ([premToSexpr pr] ++ iterexpToSexprs ie)
   | .negPr pr => .node "neg" [premToSexpr pr]
@@ -249,47 +280,48 @@ def paramToSexpr : Param → Sexpr
 
 end
 
-/-! ## Definitions (print.ml:188-227) -/
+/-! ## Definitions (print.ml:188-227, patched: regions) -/
 
 /-- print.ml:188-191 `inst`. -/
 def instToSexpr : Inst → Sexpr
-  | .mk qs args dt =>
-    .node "inst" (qs.map paramToSexpr ++ args.map argToSexpr
-      ++ [deftypToSexpr dt])
+  | .mk at? qs args dt =>
+    .node "inst" (atsToSexprs at? ++ qs.map paramToSexpr
+      ++ args.map argToSexpr ++ [deftypToSexpr dt])
 
 /-- print.ml:193-196 `rule`. -/
 def ruleToSexpr : Rule → Sexpr
-  | .mk x qs op e prs =>
-    .node "rule" ([idToSexpr x] ++ qs.map paramToSexpr
+  | .mk x at? qs op e prs =>
+    .node "rule" ([idToSexpr x] ++ atsToSexprs at? ++ qs.map paramToSexpr
       ++ [mixopToSexpr op, expToSexpr e] ++ prs.map premToSexpr)
 
 /-- print.ml:198-201 `clause`. -/
 def clauseToSexpr : Clause → Sexpr
-  | .mk qs args e prs =>
-    .node "clause" (qs.map paramToSexpr ++ args.map argToSexpr
-      ++ [expToSexpr e] ++ prs.map premToSexpr)
+  | .mk at? qs args e prs =>
+    .node "clause" (atsToSexprs at? ++ qs.map paramToSexpr
+      ++ args.map argToSexpr ++ [expToSexpr e] ++ prs.map premToSexpr)
 
 /-- print.ml:203-206 `prod`. -/
 def prodToSexpr : Prod → Sexpr
-  | .mk qs g e prs =>
-    .node "prod" (qs.map paramToSexpr ++ [symToSexpr g, expToSexpr e]
-      ++ prs.map premToSexpr)
+  | .mk at? qs g e prs =>
+    .node "prod" (atsToSexprs at? ++ qs.map paramToSexpr
+      ++ [symToSexpr g, expToSexpr e] ++ prs.map premToSexpr)
 
 /-- print.ml:208-221 `def`. -/
 def defToSexpr : Def → Sexpr
-  | .typD x ps insts =>
-    .node "typ" ([idToSexpr x] ++ ps.map paramToSexpr
+  | .typD x at? ps insts =>
+    .node "typ" ([idToSexpr x] ++ atsToSexprs at? ++ ps.map paramToSexpr
       ++ insts.map instToSexpr)
-  | .relD x ps op t rules =>
-    .node "rel" ([idToSexpr x] ++ ps.map paramToSexpr
+  | .relD x at? ps op t rules =>
+    .node "rel" ([idToSexpr x] ++ atsToSexprs at? ++ ps.map paramToSexpr
       ++ [mixopToSexpr op, typToSexpr t] ++ rules.map ruleToSexpr)
-  | .decD x ps t clauses =>
-    .node "def" ([idToSexpr x] ++ ps.map paramToSexpr
+  | .decD x at? ps t clauses =>
+    .node "def" ([idToSexpr x] ++ atsToSexprs at? ++ ps.map paramToSexpr
       ++ [typToSexpr t] ++ clauses.map clauseToSexpr)
-  | .gramD x ps t prods =>
-    .node "gram" ([idToSexpr x] ++ ps.map paramToSexpr
+  | .gramD x at? ps t prods =>
+    .node "gram" ([idToSexpr x] ++ atsToSexprs at? ++ ps.map paramToSexpr
       ++ [typToSexpr t] ++ prods.map prodToSexpr)
-  | .recD ds => .node "rec" (ds.attach.map (fun ⟨d, _⟩ => defToSexpr d))
+  | .recD at? ds =>
+    .node "rec" (atsToSexprs at? ++ ds.attach.map (fun ⟨d, _⟩ => defToSexpr d))
 
 /-- print.ml:226-227 `script` (no HintD to filter, see header). -/
 def scriptToSexprs (s : Script) : List Sexpr :=

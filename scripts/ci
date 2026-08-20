@@ -4,7 +4,8 @@
 #
 # Checks, in order (all mandatory, fail-fast):
 #   1. upstream pin: deps/spectec HEAD == baselines/upstream-pins.txt
-#   2. regenerate the wasm-3.0 IL dump with the pinned OCaml spectec;
+#   2. regenerate the wasm-3.0 IL dump (--ast-structured, D3 patch) with
+#      the pinned+patched OCaml spectec;
 #      sha256 must equal the pinned value (drift in either direction fails)
 #   3. capped `lake build` (zero errors; warnings reported)
 #   4. hygiene scan: no `partial def`, `sorry`, `native_decide` in
@@ -33,16 +34,16 @@ pin_sha=$(awk '$1=="wasm3-il-sexpr-sha256"{print $2}' baselines/upstream-pins.tx
 actual_commit=$(git -C deps/spectec rev-parse HEAD)
 [ "$actual_commit" = "$pin_commit" ] \
   || fail "deps/spectec at $actual_commit, pinned $pin_commit (bump is an arc-level decision)"
-git -C deps/spectec diff --quiet \
-  || fail "deps/spectec working tree has tracked modifications (untracked files are not checked)"
-note "pin OK: spectec @ ${pin_commit:0:12} (worktree clean)"
+diff <(git -C deps/spectec diff) <(cat patches/*.patch) >/dev/null \
+  || fail "deps/spectec worktree diff != vendored patches/ (run scripts/apply-patches on a clean pin; untracked files are not checked)"
+note "pin OK: spectec @ ${pin_commit:0:12} + vendored patches"
 
 # --- 2. regenerate + hash the oracle dump ------------------------------
 SPECTEC=deps/spectec/spectec/spectec
 [ -x "$SPECTEC" ] || fail "$SPECTEC not built (cd deps/spectec/spectec && make exe)"
 mkdir -p artifacts
-"$SPECTEC" deps/spectec/specification/wasm-3.0/*.spectec --ast -o artifacts/ci-dump.sexpr \
-  || fail "OCaml spectec --ast failed"
+"$SPECTEC" deps/spectec/specification/wasm-3.0/*.spectec --ast-structured -o artifacts/ci-dump.sexpr \
+  || fail "OCaml spectec --ast-structured failed"
 actual_sha=$(sha256sum artifacts/ci-dump.sexpr | awk '{print $1}')
 [ "$actual_sha" = "$pin_sha" ] \
   || fail "IL dump sha256 drifted: $actual_sha != pinned $pin_sha (re-pin only deliberately, with the reason committed)"
@@ -74,8 +75,8 @@ BIN=./.lake/build/bin/spectecil
 
 # --- 5b. extra corpora (sha-pinned like wasm-3.0; audit finding B8) ----
 for v in 1.0 2.0; do
-  "$SPECTEC" deps/spectec/specification/wasm-$v/*.spectec --ast \
-    -o "artifacts/ci-dump-w$v.sexpr" || fail "OCaml spectec --ast failed (wasm-$v)"
+  "$SPECTEC" deps/spectec/specification/wasm-$v/*.spectec --ast-structured \
+    -o "artifacts/ci-dump-w$v.sexpr" || fail "OCaml spectec --ast-structured failed (wasm-$v)"
   pin_v=$(awk -v k="wasm${v%%.*}-il-sexpr-sha256" '$1==k{print $2}' baselines/upstream-pins.txt)
   sha_v=$(sha256sum "artifacts/ci-dump-w$v.sexpr" | awk '{print $1}')
   [ "$sha_v" = "$pin_v" ] || fail "wasm-$v IL dump sha256 drifted: $sha_v != pinned $pin_v"

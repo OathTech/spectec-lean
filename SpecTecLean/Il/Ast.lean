@@ -1,42 +1,38 @@
+import SpecTecLean.Xl
 /-!
 Deep embedding of SpecTec's IL, mirroring `deps/spectec/spectec/src/il/ast.ml`
-(spectec @ acc6e834) — specifically the fragment observable through the
-`backend-ast` S-expression dump, which is this project's OCaml↔Lean bridge.
+(spectec @ acc6e834 + vendored patch `patches/0001-structured-ast-dump.patch`)
+— the fragment observable through the `--ast-structured` dump, this
+project's OCaml↔Lean bridge (objective decision D3 made it lossless for
+atoms/mixops, LetPr binders, and definition-level regions).
 
 Deliberate divergences from ast.ml (mirror doctrine, CLAUDE.md; each also
-logged in docs/2026-08-20_arc1-log.md):
+logged in the arc logs):
 
-- **No source positions.** ast.ml wraps nodes in `phrase` / `note_phrase`
-  (util/source.ml) carrying regions and type notes; backend-ast/print.ml
-  prints only `.it` and drops both, so the dump carries neither. We embed
-  the bare constructors.
+- **Positions at definition granularity only.** ast.ml wraps every node in
+  `phrase`/`note_phrase` (util/source.ml) with regions and type notes; the
+  patched dump carries regions for `def`/`inst`/`rule`/`clause`/`prod`
+  nodes only (`at?` fields below). Expression-level positions and type
+  notes remain undumped — extend the patch when an arc needs them.
 - **No hints.** `typfield`/`typcase` hint lists (ast.ml:43-44) are dropped
   by print.ml:89,92; `HintD` (ast.ml:138) prints as `Atom ""` and is
   filtered from scripts (print.ml:220-221,227). Neither is representable
   here; the reader rejects them if ever encountered.
-- **Atoms and mixops are opaque dump-level tokens.** ast.ml has structured
-  `Atom.atom` / `unit Mixop.mixop`; the dump renders both through
-  `Mixop.to_string` (xl/mixop.ml:91-93) / `Atom.to_string`, which is a
-  lossy, NON-INJECTIVE flattening (mixop structure and arity are erased;
-  e.g. `Seq [Atom a]` and `Seq [Atom a; Arg]` print identically).
-  Reconstructing structure would be invention, so `Atom`/`Mixop` here are
-  the decoded token strings. Recovering structured mixops needs an
-  upstream-side structural dump — recorded as an open question for a later
-  arc.
-- **`LetPr` has no binder list**: print.ml:166 drops `_qs`.
-- **`NumE` reals carry the raw printed token**: OCaml prints `%.17g`
+- **Atoms and mixops are STRUCTURED** (`SpecTecLean.Xl`), mirroring
+  xl/atom.ml + xl/mixop.ml via the D3 patch's lossless encoding. (Arc-1
+  carried them as lossy `Mixop.to_string` tokens; superseded 2026-08-20.)
+- **`NumE` reals fail closed at the reader**: OCaml prints `%.17g`
   (print.ml:20), which Lean cannot reproduce bit-for-bit; zero reals occur
-  in the wasm-3.0 corpus (grep-verified 2026-08-20).
+  in any corpus (audit 2026-08-20). The `Num.real` constructor remains for
+  printer-mirror completeness.
 - **Tuple components get named wrapper types** (`TypBind`, `Dom`) where
   ast.ml uses anonymous products (ast.ml:34,95) — a Lean structural-
   recursion idiom; content is identical.
 - **`projE`'s index and `numG`'s value are `Nat`** where ast.ml:63,103
   have OCaml `int`: both are non-negative throughout upstream
   (frontend/elab.ml builds `NumG` from `Num.nat`; proj indices are tuple
-  positions), and the printed forms (`string_of_int` / `0x%02X`) make
-  negatives either signed text the reader rejects or 63-bit
-  two's-complement garbage the reader rejects via the OCaml `max_int`
-  bound (audit 2026-08-20, findings A3/A4/B9).
+  positions), and the reader enforces the OCaml `max_int` bound
+  (audit 2026-08-20, findings A3/A4/B9).
 -/
 
 namespace SpecTecLean.Il
@@ -44,11 +40,22 @@ namespace SpecTecLean.Il
 /-- ast.ml:9 `id = string phrase` (region dropped). -/
 abbrev Id := String
 
-/-- ast.ml:10 `atom = Atom.atom`, as its dump rendering (see header). -/
-abbrev Atom := String
+/-- ast.ml:10 `atom = Atom.atom`, structured (Xl.Atom; D3). -/
+abbrev Atom := SpecTecLean.Xl.Atom
 
-/-- ast.ml:11 `mixop = unit Mixop.mixop`, as its dump rendering. -/
-abbrev Mixop := String
+/-- ast.ml:11 `mixop = unit Mixop.mixop`, structured (Xl.Mixop; D3). -/
+abbrev Mixop := SpecTecLean.Xl.Mixop
+
+/-- util/source.ml:3-4 `pos`/`region`, as dumped by the patch's
+`(at "file" l1 c1 l2 c2)` nodes. Lines/columns are OCaml ints (line -1
+occurs for binary-offset positions upstream), hence `Int`. -/
+structure Region where
+  file : String
+  l1 : Int
+  c1 : Int
+  l2 : Int
+  c2 : Int
+deriving Repr, BEq, Inhabited
 
 /-- xl/num.ml:14 `typ = [`NatT | `IntT | `RatT | `RealT]`. -/
 inductive NumTyp where
@@ -62,7 +69,8 @@ inductive OpTyp where
 deriving Repr, BEq, Inhabited
 
 /-- xl/num.ml:6-12 `num`. `rat` is zarith `Q.t` as printed `num/den`
-(print.ml:19); `real` is the raw `%.17g` token (see header). -/
+(print.ml:19; reader enforces Q.t canonicity); `real` is the raw `%.17g`
+token (reader rejects; see header). -/
 inductive Num where
   | nat (n : Nat)
   | int (i : Int)
@@ -118,8 +126,8 @@ inductive DefTyp where
   | structT (fields : List TypField)         -- StructT
   | variantT (cases : List TypCase)          -- VariantT
 
-/-- ast.ml:43 `typfield` (hints dropped; atom printed as mixop token,
-print.ml:90). -/
+/-- ast.ml:43 `typfield` (hints dropped; atom now structural, patched
+print.ml `atom`). -/
 inductive TypField where
   | mk (atom : Atom) (t : Typ) (quants : List Param) (prems : List Prem)
 
@@ -160,7 +168,7 @@ inductive Exp where
   | cvtE (e : Exp) (nt1 nt2 : NumTyp)        -- CvtE
   | subE (e : Exp) (t1 t2 : Typ)             -- SubE
 
-/-- ast.ml:86 `expfield` (atom printed as mixop token, print.ml:131-132). -/
+/-- ast.ml:86 `expfield` (atom structural, patched print.ml). -/
 inductive ExpField where
   | mk (atom : Atom) (e : Exp)
 
@@ -205,11 +213,12 @@ inductive Param where
   | defP (x : Id) (params : List Param) (t : Typ)   -- DefP
   | gramP (x : Id) (params : List Param) (t : Typ)  -- GramP
 
-/-- ast.ml:157-163 `prem'` (LetPr binders dropped, see header). -/
+/-- ast.ml:157-163 `prem'` (LetPr binders now carried — D3 patch dumps
+`(let param* e1 e2)`, superseding the arc-1 dropped-binders divergence). -/
 inductive Prem where
   | rulePr (x : Id) (args : List Arg) (op : Mixop) (e : Exp)  -- RulePr
   | ifPr (e : Exp)                           -- IfPr
-  | letPr (e1 e2 : Exp)                      -- LetPr
+  | letPr (quants : List Param) (e1 e2 : Exp)  -- LetPr
   | elsePr                                   -- ElsePr
   | iterPr (pr : Prem) (ie : IterExp)        -- IterPr
   | negPr (pr : Prem)                        -- NegPr
@@ -224,37 +233,42 @@ deriving instance BEq for Iter, Typ, TypBind, DefTyp, TypField, TypCase,
 /-- ast.ml:129 `quant = param`. -/
 abbrev Quant := Param
 
-/-- ast.ml:141-142 `inst'`. -/
+/-- ast.ml:141-142 `inst'` (+ dumped region, D3). -/
 inductive Inst where
-  | mk (quants : List Quant) (args : List Arg) (dt : DefTyp)
+  | mk (at? : Option Region) (quants : List Quant) (args : List Arg)
+       (dt : DefTyp)
 deriving Repr, BEq
 
-/-- ast.ml:145-146 `rule'`. -/
+/-- ast.ml:145-146 `rule'` (+ dumped region, D3). -/
 inductive Rule where
-  | mk (x : Id) (quants : List Quant) (op : Mixop) (e : Exp)
+  | mk (x : Id) (at? : Option Region) (quants : List Quant) (op : Mixop)
+       (e : Exp) (prems : List Prem)
+deriving Repr, BEq
+
+/-- ast.ml:149-150 `clause'` (+ dumped region, D3). -/
+inductive Clause where
+  | mk (at? : Option Region) (quants : List Quant) (args : List Arg)
+       (e : Exp) (prems : List Prem)
+deriving Repr, BEq
+
+/-- ast.ml:153-154 `prod'` (+ dumped region, D3). -/
+inductive Prod where
+  | mk (at? : Option Region) (quants : List Quant) (g : Sym) (e : Exp)
        (prems : List Prem)
 deriving Repr, BEq
 
-/-- ast.ml:149-150 `clause'`. -/
-inductive Clause where
-  | mk (quants : List Quant) (args : List Arg) (e : Exp) (prems : List Prem)
-deriving Repr, BEq
-
-/-- ast.ml:153-154 `prod'`. -/
-inductive Prod where
-  | mk (quants : List Quant) (g : Sym) (e : Exp) (prems : List Prem)
-deriving Repr, BEq
-
-/-- ast.ml:132-138 `def'` (HintD absent from dumps, see header). -/
+/-- ast.ml:132-138 `def'` (+ dumped regions, D3; HintD absent from
+dumps, see header). -/
 inductive Def where
-  | typD (x : Id) (params : List Param) (insts : List Inst)         -- TypD
-  | relD (x : Id) (params : List Param) (op : Mixop) (t : Typ)
-         (rules : List Rule)                                        -- RelD
-  | decD (x : Id) (params : List Param) (t : Typ)
-         (clauses : List Clause)                                    -- DecD
-  | gramD (x : Id) (params : List Param) (t : Typ)
-          (prods : List Prod)                                       -- GramD
-  | recD (ds : List Def)                                            -- RecD
+  | typD (x : Id) (at? : Option Region) (params : List Param)
+         (insts : List Inst)                                        -- TypD
+  | relD (x : Id) (at? : Option Region) (params : List Param)
+         (op : Mixop) (t : Typ) (rules : List Rule)                 -- RelD
+  | decD (x : Id) (at? : Option Region) (params : List Param)
+         (t : Typ) (clauses : List Clause)                          -- DecD
+  | gramD (x : Id) (at? : Option Region) (params : List Param)
+          (t : Typ) (prods : List Prod)                             -- GramD
+  | recD (at? : Option Region) (ds : List Def)                      -- RecD
 deriving Repr, BEq
 
 /-- ast.ml:178 `script = def list`. -/

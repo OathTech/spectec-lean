@@ -62,9 +62,57 @@ def readQuoted (ctx : String) : Sexpr → ReadM String
   | x => fail ctx x "expected quoted atom"
 
 def readId (x : Sexpr) : ReadM Id := readQuoted "id" x
-def readMixop (x : Sexpr) : ReadM Mixop := readQuoted "mixop" x
-def readAtom (x : Sexpr) : ReadM Atom := readQuoted "atom" x
 def readText (x : Sexpr) : ReadM String := readQuoted "text" x
+
+/-- Patched `atom_sx` inverse: `(a "s")` | `(s <fixed-name>)` (D3). -/
+def readAtom (x : Sexpr) : ReadM Atom :=
+  match x with
+  | .node "a" [s] => do .ok (.atom (← readQuoted "atomid" s))
+  | .node "s" [.atom n] =>
+    match SpecTecLean.Xl.Atom.ofFixedName n with
+    | some a => .ok a
+    | none => fail "atom" x s!"unknown fixed atom name {n}"
+  | _ => fail "atom" x "expected (a \"…\") or (s name)"
+
+/-- Patched `mixop_sx` inverse (D3). -/
+def readMixop (x : Sexpr) : ReadM Mixop :=
+  match x with
+  | .atom "%" => .ok .arg
+  | .node "a" _ => do .ok (.atom (← readAtom x))
+  | .node "s" _ => do .ok (.atom (← readAtom x))
+  | .node "brack" [l, m, r] => do
+    .ok (.brack (← readAtom l) (← readMixop m) (← readAtom r))
+  | .node "infix" [m1, a, m2] => do
+    .ok (.infix (← readMixop m1) (← readAtom a) (← readMixop m2))
+  | .node "seq" ms => do
+    .ok (.seq (← ms.attach.mapM (fun ⟨m, _⟩ => readMixop m)))
+  | _ => fail "mixop" x "unknown mixop"
+
+/-- OCaml `string_of_int` inverse, canonical (Int.toString matches). -/
+def readOcamlInt (ctx : String) : Sexpr → ReadM Int
+  | x@(.atom tok) =>
+    let v? : Option Int :=
+      if tok.startsWith "-" then ((tok.drop 1).toString.toNat?).map (fun n => -(Int.ofNat n))
+      else tok.toNat?.map Int.ofNat
+    match v? with
+    | some v => if toString v == tok then .ok v
+                else fail ctx x "non-canonical int literal"
+    | none => fail ctx x "expected int literal"
+  | x => fail ctx x "expected int literal"
+
+/-- Patched `at_sx` inverse: `(at "file" l1 c1 l2 c2)` (D3). -/
+def readRegion (x : Sexpr) : ReadM Region :=
+  match x with
+  | .node "at" [f, l1, c1, l2, c2] => do
+    .ok { file := (← readQuoted "at.file" f), l1 := (← readOcamlInt "at" l1),
+          c1 := (← readOcamlInt "at" c1), l2 := (← readOcamlInt "at" l2),
+          c2 := (← readOcamlInt "at" c2) }
+  | _ => fail "region" x "expected (at \"file\" l1 c1 l2 c2)"
+
+/-- Consume an optional leading `(at …)` child (def-level nodes, D3). -/
+def takeAt : List Sexpr → ReadM (Option Region × List Sexpr)
+  | x@(.node "at" _) :: rest => do .ok (some (← readRegion x), rest)
+  | cs => .ok (none, cs)
 
 /-- print.ml:11 inverse. -/
 def readBool : Sexpr → ReadM Bool
@@ -436,7 +484,16 @@ def readPrem (x : Sexpr) : ReadM Prem :=
       .ok (.rulePr xid args (← readMixop op) (← readExp e))
     | _ => fail "rulePr" x "expected trailing mixop and exp"
   | .node "if" [e] => do .ok (.ifPr (← readExp e))
-  | .node "let" [e1, e2] => do .ok (.letPr (← readExp e1) (← readExp e2))
+  | .node "let" cs => do
+    -- patched print.ml: (let param* e1 e2) — binders dumped (D3)
+    let qs := cs.attach.takeWhile (fun c => isParamArgNode c.val)
+    let tail := cs.attach.dropWhile (fun c => isParamArgNode c.val)
+    let qs ← qs.mapM (fun ⟨q, _⟩ => do
+      if !(← classifyParamArg q) then fail "letPr" q "arg in quant position"
+      else readParam q)
+    match tail with
+    | [⟨e1, _⟩, ⟨e2, _⟩] => do .ok (.letPr qs (← readExp e1) (← readExp e2))
+    | _ => fail "letPr" x "expected trailing exp exp"
   | .atom "else" => .ok .elsePr
   | .node "iter" (pr :: it :: doms) => do
     .ok (.iterPr (← readPrem pr)
@@ -521,9 +578,10 @@ private def readParamsPrefix (ctx : String) (cs : List Sexpr) :
 def readInst (x : Sexpr) : ReadM Inst :=
   match x with
   | .node "inst" cs => do
+    let (at?, cs) ← takeAt cs
     let (qs, args, rest) ← splitParamsArgs "inst" cs
     match rest with
-    | [dt] => do .ok (.mk qs args (← readDefTyp dt))
+    | [dt] => do .ok (.mk at? qs args (← readDefTyp dt))
     | _ => fail "inst" x "expected exactly one trailing deftyp"
   | _ => fail "inst" x "expected (inst …)"
 
@@ -532,10 +590,11 @@ def readRule (x : Sexpr) : ReadM Rule :=
   match x with
   | .node "rule" (xid :: cs) => do
     let xid ← readId xid
+    let (at?, cs) ← takeAt cs
     let (qs, rest) ← readParamsPrefix "rule" cs
     match rest with
     | op :: e :: prems => do
-      .ok (.mk xid qs (← readMixop op) (← readExp e)
+      .ok (.mk xid at? qs (← readMixop op) (← readExp e)
         (← prems.mapM readPrem))
     | _ => fail "rule" x "expected mixop, exp, prem*"
   | _ => fail "rule" x "expected (rule id …)"
@@ -544,10 +603,11 @@ def readRule (x : Sexpr) : ReadM Rule :=
 def readClause (x : Sexpr) : ReadM Clause :=
   match x with
   | .node "clause" cs => do
+    let (at?, cs) ← takeAt cs
     let (qs, args, rest) ← splitParamsArgs "clause" cs
     match rest with
     | e :: prems => do
-      .ok (.mk qs args (← readExp e) (← prems.mapM readPrem))
+      .ok (.mk at? qs args (← readExp e) (← prems.mapM readPrem))
     | _ => fail "clause" x "expected exp, prem*"
   | _ => fail "clause" x "expected (clause …)"
 
@@ -555,10 +615,11 @@ def readClause (x : Sexpr) : ReadM Clause :=
 def readProd (x : Sexpr) : ReadM Prod :=
   match x with
   | .node "prod" cs => do
+    let (at?, cs) ← takeAt cs
     let (qs, rest) ← readParamsPrefix "prod" cs
     match rest with
     | g :: e :: prems => do
-      .ok (.mk qs (← readSym g) (← readExp e) (← prems.mapM readPrem))
+      .ok (.mk at? qs (← readSym g) (← readExp e) (← prems.mapM readPrem))
     | _ => fail "prod" x "expected sym, exp, prem*"
   | _ => fail "prod" x "expected (prod …)"
 
@@ -568,32 +629,41 @@ def readDef (x : Sexpr) : ReadM Def :=
   match x with
   | .node "typ" (xid :: cs) => do
     let xid ← readId xid
+    let (at?, cs) ← takeAt cs
     let (ps, rest) ← readParamsPrefix "typD" cs
-    .ok (.typD xid ps (← rest.mapM readInst))
+    .ok (.typD xid at? ps (← rest.mapM readInst))
   | .node "rel" (xid :: cs) => do
     let xid ← readId xid
+    let (at?, cs) ← takeAt cs
     let (ps, rest) ← readParamsPrefix "relD" cs
     match rest with
     | op :: t :: rules => do
-      .ok (.relD xid ps (← readMixop op) (← readTyp t)
+      .ok (.relD xid at? ps (← readMixop op) (← readTyp t)
         (← rules.mapM readRule))
     | _ => fail "relD" x "expected mixop, typ, rule*"
   | .node "def" (xid :: cs) => do
     let xid ← readId xid
+    let (at?, cs) ← takeAt cs
     let (ps, rest) ← readParamsPrefix "decD" cs
     match rest with
     | t :: clauses => do
-      .ok (.decD xid ps (← readTyp t) (← clauses.mapM readClause))
+      .ok (.decD xid at? ps (← readTyp t) (← clauses.mapM readClause))
     | _ => fail "decD" x "expected typ, clause*"
   | .node "gram" (xid :: cs) => do
     let xid ← readId xid
+    let (at?, cs) ← takeAt cs
     let (ps, rest) ← readParamsPrefix "gramD" cs
     match rest with
     | t :: prods => do
-      .ok (.gramD xid ps (← readTyp t) (← prods.mapM readProd))
+      .ok (.gramD xid at? ps (← readTyp t) (← prods.mapM readProd))
     | _ => fail "gramD" x "expected typ, prod*"
+  -- region taken inline (not via takeAt) so the subterm relation stays
+  -- visible for termination
+  | .node "rec" (atx@(.node "at" _) :: rest) => do
+    let r ← readRegion atx
+    .ok (.recD (some r) (← rest.attach.mapM (fun ⟨d, _⟩ => readDef d)))
   | .node "rec" ds => do
-    .ok (.recD (← ds.attach.mapM (fun ⟨d, _⟩ => readDef d)))
+    .ok (.recD none (← ds.attach.mapM (fun ⟨d, _⟩ => readDef d)))
   | _ => fail "def" x "unknown definition"
 
 /-- Whole script. -/
