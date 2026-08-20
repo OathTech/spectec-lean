@@ -81,7 +81,7 @@ def readNatTok (ctx : String) : Sexpr → ReadM Nat
 /-- print.ml:16-20 inverse. Each branch re-renders and compares
 (`numToSexpr` is the printer mirror). -/
 def readNum : Sexpr → ReadM Num
-  | x@(.node "nat" [d]) => do
+  | .node "nat" [d] => do
     let n ← readNatTok "num.nat" d
     .ok (.nat n)
   | x@(.node "int" [.atom tok]) => do
