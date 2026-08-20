@@ -1,0 +1,9 @@
+(def "synthInt" int (clause (num (int +7))) (clause (num (int -7))))
+(def "synthRat" rat (clause (num (rat 1/2))) (clause (num (rat -1/2))))
+(def "synthImpl" bool (clause (bin impl bool (bool true) (bool false))))
+(def "synthUnopt" nat (clause (unopt (opt (num (nat 1))))))
+(def "synthLet" nat (clause (var "x") (let (var "x") (num (nat 2)))))
+(def "synthNeg" nat (clause (num (nat 0)) (neg (if (bool false)))))
+(def "synthUn" int (clause (un minus int (un plus int (num (int +3))))))
+(typ "synthT" (inst (alias (iter nat list1))))
+

@@ -18,7 +18,12 @@ def diffReport (input output : ByteArray) : String :=
     let ctx (x : ByteArray) : String :=
       let lo := i - 40
       let hi := min x.size (i + 40)
-      String.fromUTF8! (x.extract lo hi)
+      let bytes := x.extract lo hi
+      -- total decode: a slice can split a UTF-8 sequence or carry invalid
+      -- bytes (audit 2026-08-20: fromUTF8! panicked here)
+      match String.fromUTF8? bytes with
+      | some s => s
+      | none => s!"(non-UTF8 bytes) {bytes.toList}"
     s!"first difference at byte {i}\n  input:  …{ctx input}…\n  output: …{ctx output}…"
 
 /-- text → Sexpr → text, byte-identical (charter slice 3 gate). -/

@@ -11,7 +11,8 @@
 #      SpecTecLean/ or Main.lean (deterrent standard: catches the honest
 #      mistake, not a motivated adversary — do not harden)
 #   5. full round-trip: text -> Sexpr -> IL -> Sexpr -> text byte-identical
-#      (plus the Sexpr-layer-only round-trip)
+#      (plus the Sexpr-layer-only round-trip); 5b: wasm-1.0/2.0 likewise,
+#      sha-pinned; 5c: tracked synthetic corpus for wasm-absent branches
 #   6. fail-closed probes: three corrupted dumps must FAIL with exit 1
 #
 # The OCaml toolchain must be built (deps/spectec/spectec/spectec); this
@@ -32,7 +33,9 @@ pin_sha=$(awk '$1=="wasm3-il-sexpr-sha256"{print $2}' baselines/upstream-pins.tx
 actual_commit=$(git -C deps/spectec rev-parse HEAD)
 [ "$actual_commit" = "$pin_commit" ] \
   || fail "deps/spectec at $actual_commit, pinned $pin_commit (bump is an arc-level decision)"
-note "pin OK: spectec @ ${pin_commit:0:12}"
+git -C deps/spectec diff --quiet \
+  || fail "deps/spectec working tree has tracked modifications (untracked files are not checked)"
+note "pin OK: spectec @ ${pin_commit:0:12} (worktree clean)"
 
 # --- 2. regenerate + hash the oracle dump ------------------------------
 SPECTEC=deps/spectec/spectec/spectec
@@ -49,7 +52,7 @@ note "oracle dump OK: sha256 ${actual_sha:0:12}… ($(wc -c < artifacts/ci-dump.
 build_log=$(mktemp artifacts/ci-build-XXXX.log)
 scripts/capped lake build >"$build_log" 2>&1 || { cat "$build_log"; fail "lake build failed"; }
 if grep -q "warning" "$build_log"; then
-  note "build OK with warnings:"; grep "warning" "$build_log" | head -5
+  note "build OK with warnings:"; { grep "warning" "$build_log" | head -5; } || true
 else
   note "build OK (warning-free)"
 fi
@@ -58,7 +61,7 @@ rm -f "$build_log"
 # --- 4. hygiene scan ---------------------------------------------------
 # Word-boundary grep over tracked Lean sources; `partial def`, `sorry`,
 # `native_decide` are all forbidden in anything claimed done (CLAUDE.md).
-if grep -rnE '(^|[^[:alnum:]_])(partial[[:space:]]+def|sorry|native_decide)([^[:alnum:]_]|$)' \
+if grep -rnE '(^|[^[:alnum:]_])(partial[[:space:]]+def|sorry|native_decide)([^[:alnum:]_]|$)|set_option[[:space:]]+(maxHeartbeats|maxRecDepth)' \
      --include='*.lean' SpecTecLean/ SpecTecLean.lean Main.lean; then
   fail "forbidden construct (partial def / sorry / native_decide) in sources"
 fi
@@ -69,14 +72,25 @@ BIN=./.lake/build/bin/spectecil
 "$BIN" roundtrip-sexpr artifacts/ci-dump.sexpr || fail "Sexpr-layer roundtrip failed"
 "$BIN" roundtrip artifacts/ci-dump.sexpr || fail "full IL roundtrip failed"
 
-# --- 5b. extra corpora (same pinned commit; roundtrip-only, no sha pin —
-# the commit pin already fixes their content) ---------------------------
+# --- 5b. extra corpora (sha-pinned like wasm-3.0; audit finding B8) ----
 for v in 1.0 2.0; do
   "$SPECTEC" deps/spectec/specification/wasm-$v/*.spectec --ast \
     -o "artifacts/ci-dump-w$v.sexpr" || fail "OCaml spectec --ast failed (wasm-$v)"
+  pin_v=$(awk -v k="wasm${v%%.*}-il-sexpr-sha256" '$1==k{print $2}' baselines/upstream-pins.txt)
+  sha_v=$(sha256sum "artifacts/ci-dump-w$v.sexpr" | awk '{print $1}')
+  [ "$sha_v" = "$pin_v" ] || fail "wasm-$v IL dump sha256 drifted: $sha_v != pinned $pin_v"
   "$BIN" roundtrip "artifacts/ci-dump-w$v.sexpr" || fail "roundtrip failed (wasm-$v)"
   rm -f "artifacts/ci-dump-w$v.sexpr"
 done
+
+# --- 5c. synthetic coverage corpus (tracked, hand-authored) -------------
+# Exercises reader/printer branches ABSENT from all wasm corpora (audit
+# 2026-08-20 finding B2: int, rat, unopt/TheE, let/LetPr, neg/NegPr,
+# impl, un plus/minus, bool false, list1). This tests print∘parse = id
+# and branch coverage only — there is no OCaml oracle for these inputs
+# (the OCaml side cannot be made to emit them from a wasm spec).
+"$BIN" roundtrip baselines/synthetic-coverage.sexpr \
+  || fail "synthetic coverage corpus roundtrip failed"
 
 # --- 6. fail-closed probes ---------------------------------------------
 probe() { # name, transform (stdin->stdout)

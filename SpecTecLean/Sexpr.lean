@@ -16,9 +16,16 @@ Deliberate divergences (mirror doctrine, CLAUDE.md):
 - Parsing has no OCaml counterpart to mirror (the OCaml side only prints);
   the tokenizer/parser below is fail-closed: any input outside the exact
   shape `pp` can emit (plus interior whitespace variation) is an error,
-  never a skip. Input is required to be printable ASCII (all `pp` output
-  is: OCaml `String.escaped` maps everything else to escape sequences), so
-  `String.length` below coincides with OCaml's byte-based `String.length`.
+  never a skip. Input is required to be printable ASCII on EVERY byte path
+  (all `pp` output is: OCaml `String.escaped` maps everything else to
+  escape sequences), so `String.length` below coincides with OCaml's
+  byte-based `String.length`.
+- Known boundary (audit 2026-08-20): `Atom ""` (what `HintD` prints as,
+  print.ml:220-221) renders as zero-width text, so a parser cannot see it;
+  if one were nested in a `RecD` (top-level ones are filtered,
+  print.ml:227; nested ones are believed unreachable per il/free.ml:213 +
+  elab.ml:2853-2859), the round-trip byte-compare fails VISIBLY — it can
+  never pass silently.
 -/
 
 namespace SpecTecLean
@@ -54,7 +61,7 @@ def render (width : Nat) (x : Sexpr) : String :=
 
 /-- The `--ast -o file` byte format (exe-spectec/main.ml:324-328):
 each top-level sexpr rendered with a trailing newline, then one extra
-final newline. Default width is 80 (backend-ast/config.ml:10). -/
+final newline. Default width is 80 (backend-ast/config.ml:9). -/
 def renderScript (width : Nat) (xs : List Sexpr) : String :=
   String.join (xs.map (render width)) ++ "\n"
 
@@ -95,7 +102,13 @@ where
       let b := a.get! j
       if b == 34 then .ok (j + 1)                    -- '"'
       else if b == 92 then                           -- '\\'
-        if j + 1 < a.size then go (j + 2)
+        if _h2 : j + 1 < a.size then
+          let b2 := a.get! (j + 1)
+          -- the escaped byte must also be printable ASCII (String.escaped
+          -- emits only such; audit 2026-08-20 finding — this branch
+          -- previously skipped the check, breaking the ASCII invariant)
+          if 32 ≤ b2 && b2 ≤ 126 then go (j + 2)
+          else .error ⟨j + 1, s!"non-printable or non-ASCII byte {b2} after backslash"⟩
         else .error ⟨j, "dangling backslash at end of input"⟩
       else if 32 ≤ b && b ≤ 126 then go (j + 1)
       else .error ⟨j, s!"non-printable or non-ASCII byte {b} in string"⟩

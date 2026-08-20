@@ -30,6 +30,13 @@ logged in docs/2026-08-20_arc1-log.md):
 - **Tuple components get named wrapper types** (`TypBind`, `Dom`) where
   ast.ml uses anonymous products (ast.ml:34,95) — a Lean structural-
   recursion idiom; content is identical.
+- **`projE`'s index and `numG`'s value are `Nat`** where ast.ml:63,103
+  have OCaml `int`: both are non-negative throughout upstream
+  (frontend/elab.ml builds `NumG` from `Num.nat`; proj indices are tuple
+  positions), and the printed forms (`string_of_int` / `0x%02X`) make
+  negatives either signed text the reader rejects or 63-bit
+  two's-complement garbage the reader rejects via the OCaml `max_int`
+  bound (audit 2026-08-20, findings A3/A4/B9).
 -/
 
 namespace SpecTecLean.Il

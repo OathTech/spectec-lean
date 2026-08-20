@@ -10,10 +10,13 @@ cites the print.ml line it inverts.
 
 Fail-closed rules (CLAUDE.md): unknown node heads, wrong child counts,
 malformed literals, or non-canonical tokens are explicit errors — never a
-skip or default. Canonicality: every literal token is re-rendered after
-parsing and must equal the source token (so `print ∘ parse = id` holds
-token-by-token by construction, and e.g. `\065` for `A`, `007` for `7`, or
-lowercase hex — which print.ml cannot emit — are rejected).
+skip or default. Canonicality: every ACCEPTED literal token is re-rendered
+after parsing and must equal the source token (so `print ∘ parse = id`
+holds token-by-token by construction; e.g. `\065` for `A`, `007`/`+007`,
+`4/2`, `1/0`, lowercase hex, values above OCaml `max_int` — none of which
+print.ml can emit — are rejected). The one non-accepting branch: `real`
+literals fail closed outright (no `%.17g` mirror, zero corpus coverage —
+audit 2026-08-20; extend when a corpus needs them).
 
 Head-label disambiguation notes (the dump's labels are context-dependent):
 - `param` vs `arg` share the labels exp/typ/def/gram (print.ml:174-186).
@@ -78,8 +81,13 @@ def readNatTok (ctx : String) : Sexpr → ReadM Nat
     | none => fail ctx x "expected nat literal"
   | x => fail ctx x "expected nat literal"
 
-/-- print.ml:16-20 inverse. Each branch re-renders and compares
-(`numToSexpr` is the printer mirror). -/
+/-- print.ml:16-20 inverse. The nat/int/rat branches re-render (via the
+printer mirror `numToSexpr`) and require equality with the source; rat
+additionally enforces zarith `Q.t` canonicity (den > 0, reduced — Q.t
+maintains both invariants, so print.ml:19 cannot emit anything else,
+including `Q.inf`/`Q.undef` forms `±1/0`, `0/0`). The real branch FAILS
+CLOSED: `%.17g` is not mirrored and no corpus exercises reals (audit
+2026-08-20, both reviewers) — extend when a corpus needs it. -/
 def readNum : Sexpr → ReadM Num
   | .node "nat" [d] => do
     let n ← readNatTok "num.nat" d
@@ -89,9 +97,14 @@ def readNum : Sexpr → ReadM Num
     let sign := (tok.take 1).toString
     let mag := (tok.drop 1).toString
     match sign, mag.toNat? with
-    | "+", some n => .ok (.int (Int.ofNat n))
+    | "+", some n =>
+      let v : Num := .int (Int.ofNat n)
+      if numToSexpr v == x then .ok v
+      else fail "num.int" x "non-canonical int literal"
     | "-", some n =>
-      if n == 0 then fail "num.int" x "non-canonical -0" else .ok (.int (-(Int.ofNat n)))
+      let v : Num := .int (-(Int.ofNat n))
+      if numToSexpr v == x then .ok v
+      else fail "num.int" x "non-canonical int literal"
     | _, _ => fail "num.int" x "expected signed int literal"
   | x@(.node "rat" [.atom tok]) => do
     -- print.ml:19: Z.to_string (Q.num) "/" Z.to_string (Q.den)
@@ -107,15 +120,26 @@ def readNum : Sexpr → ReadM Num
           | none => .error s!"bad int {s}"
       match readZ ps, readZ qs with
       | .ok p, .ok q =>
-        let n : Num := .rat p q
-        if numToSexpr n == x then .ok n
-        else fail "num.rat" x "non-canonical rat literal"
+        if q ≤ 0 then
+          fail "num.rat" x "non-canonical rat (Q.t keeps den > 0)"
+        else if Nat.gcd p.natAbs q.natAbs != 1 then
+          fail "num.rat" x "non-canonical rat (Q.t keeps fractions reduced)"
+        else
+          let n : Num := .rat p q
+          if numToSexpr n == x then .ok n
+          else fail "num.rat" x "non-canonical rat literal"
       | _, _ => fail "num.rat" x "expected p/q"
     | _ => fail "num.rat" x "expected p/q"
-  | .node "real" [.atom raw] =>
-    -- raw %.17g token carried verbatim (see Il/Ast.lean header)
-    .ok (.real raw)
+  | x@(.node "real" _) =>
+    fail "num.real" x
+      "real literals unsupported (fail-closed; %.17g not mirrored, zero corpus coverage — audit 2026-08-20)"
   | x => fail "num" x "expected (nat|int|rat|real …)"
+
+/-- OCaml's native `int` is 63-bit on 64-bit platforms; `string_of_int` /
+`0x%02X` cannot emit magnitudes above `max_int = 2^62 - 1`. Rejecting
+larger values also closes the negative-`int` two's-complement rendering
+of `%02X` (audit 2026-08-20, finding A4). -/
+def ocamlMaxInt : Nat := 4611686018427387903
 
 /-- print.ml:25-30 inverse. -/
 def readUnop : Sexpr → ReadM UnOp
@@ -175,8 +199,10 @@ def readHexByte : Sexpr → ReadM Nat
     match ds.foldl step (.ok 0) with
     | .error e => fail "sym.num" x e
     | .ok n =>
-      if hexByte n == tok then .ok n
-      else fail "sym.num" x "non-canonical hex literal"
+      if hexByte n != tok then fail "sym.num" x "non-canonical hex literal"
+      else if n > ocamlMaxInt then
+        fail "sym.num" x "exceeds OCaml max_int (unprintable upstream)"
+      else .ok n
   | x => fail "sym.num" x "expected hex literal"
 
 /-! ## param/arg classification (see header) -/
@@ -330,7 +356,10 @@ def readExp (x : Sexpr) : ReadM Exp :=
     .ok (.iterE (← readExp e1)
       (.mk (← readIter it) (← doms.attach.mapM (fun ⟨d, _⟩ => readDom d))))
   | .node "proj" [e1, i] => do
-    .ok (.projE (← readExp e1) (← readNatTok "proj" i))
+    let i ← readNatTok "proj" i
+    if i > ocamlMaxInt then
+      fail "proj" x "index exceeds OCaml max_int (unprintable upstream)"
+    else .ok (.projE (← readExp e1) i)
   | .node "case" [op, e1] => do .ok (.caseE (← readMixop op) (← readExp e1))
   | .node "uncase" [e1, op] => do
     .ok (.uncaseE (← readExp e1) (← readMixop op))
