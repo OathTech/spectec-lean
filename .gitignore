@@ -2,3 +2,5 @@ deps/
 .claude/
 .opam/
 _opam/
+artifacts/
+.lake/

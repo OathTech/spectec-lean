@@ -1,0 +1,5 @@
+# Upstream pins — checked by scripts/ci. Re-pin only as a deliberate,
+# explained decision committed with the reason (see CLAUDE.md).
+# Format: <key> <value>
+spectec-commit acc6e834ff403c82554d081237f327346190ad96
+wasm3-il-sexpr-sha256 aee3ca1af1b1004a4ea32f9c2779429fa755d0776e0a554510087336d69977e0
