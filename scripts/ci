@@ -93,6 +93,31 @@ done
 "$BIN" roundtrip baselines/synthetic-coverage.sexpr \
   || fail "synthetic coverage corpus roundtrip failed"
 
+# --- 5d. validator (arc-2 stages 3-4: eval.ml+valid.ml mirrors) --------
+# The OCaml elaborator only emits well-formed IL, so all-green IS the
+# oracle signal (charter stage 3). Synthetic corpus is round-trip-only
+# (hand-authored, not valid IL — no binders).
+"$BIN" validate artifacts/ci-dump.sexpr || fail "wasm-3.0 validation failed"
+for v in 1.0 2.0; do
+  "$SPECTEC" deps/spectec/specification/wasm-$v/*.spectec --ast-structured     -o "artifacts/ci-val-w$v.sexpr" || fail "dump failed (wasm-$v)"
+  "$BIN" validate "artifacts/ci-val-w$v.sexpr"     || fail "wasm-$v validation failed"
+  rm -f "artifacts/ci-val-w$v.sexpr"
+done
+
+# validator mutation probes: type-broken dumps must be REJECTED
+vprobe() { # name, transform
+  local name=$1; shift
+  "$@" < artifacts/ci-dump.sexpr > "artifacts/ci-vprobe-$name.sexpr"
+  if "$BIN" validate "artifacts/ci-vprobe-$name.sexpr" >/dev/null 2>&1; then
+    fail "validator probe '$name' PASSED (must fail)"
+  fi
+  rm -f "artifacts/ci-vprobe-$name.sexpr"
+}
+vprobe undeclared-type 'sed' 's/(var "instr")/(var "instrr")/'
+vprobe undeclared-var  'sed' 's/(var "numtype")/(var "numtypee")/'
+vprobe bad-cmp-annot   'sed' '0,/(cmp eq bool/s//(cmp lt bool/'
+note "validator OK: 3 corpora green, 3/3 mutation probes rejected"
+
 # --- 6. fail-closed probes ---------------------------------------------
 probe() { # name, transform (stdin->stdout)
   local name=$1; shift

@@ -52,6 +52,14 @@ def addDefid (s : Subst) (x : Id) (x' : Id) : Subst :=
 def addGramid (s : Subst) (x : Id) (g : Sym) : Subst :=
   if x == "_" then s else { s with gramid := s.gramid.add x g }
 
+/-- subst.ml:40-45 `union` (right-biased: bindings of s2 win). With
+assoc-list maps, prepending s2's entries makes lookup prefer them. -/
+def union (s1 s2 : Subst) : Subst :=
+  { varid := ⟨s2.varid.entries ++ s1.varid.entries⟩
+    typid := ⟨s2.typid.entries ++ s1.typid.entries⟩
+    defid := ⟨s2.defid.entries ++ s1.defid.entries⟩
+    gramid := ⟨s2.gramid.entries ++ s1.gramid.entries⟩ }
+
 /-- subst.ml:47 `remove_varid'`. -/
 def removeVarid (s : Subst) (x : String) : Subst :=
   { s with varid := ⟨s.varid.entries.filter (fun p => p.1 != x)⟩ }

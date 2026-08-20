@@ -241,6 +241,9 @@ deriving instance Repr for Iter, Typ, TypBind, DefTyp, TypField, TypCase,
 deriving instance BEq for Iter, Typ, TypBind, DefTyp, TypField, TypCase,
   Exp, Exp', ExpField, Path, Path', IterExp, Dom, Sym, Arg, Param, Prem
 
+instance : Inhabited Exp := ⟨.mk (.boolE false) .boolT⟩
+instance : Inhabited Path := ⟨.mk .rootP .boolT⟩
+
 /-- Accessors mirroring `phrase` projections (`.it` / `.note`). -/
 def Exp.it : Exp → Exp' | .mk it _ => it
 def Exp.note : Exp → Typ | .mk _ note => note

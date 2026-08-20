@@ -1,6 +1,7 @@
 import SpecTecLean.Sexpr
 import SpecTecLean.OcamlEscape
 import SpecTecLean.Xl
+import SpecTecLean.XlOps
 import SpecTecLean.Il.Ast
 import SpecTecLean.Il.ToSexpr
 import SpecTecLean.Il.OfSexpr
@@ -9,4 +10,6 @@ import SpecTecLean.Il.Eq
 import SpecTecLean.Il.Fresh
 import SpecTecLean.Il.Env
 import SpecTecLean.Il.Subst
+import SpecTecLean.Il.Eval
+import SpecTecLean.Il.Valid
 import SpecTecLean.Probes

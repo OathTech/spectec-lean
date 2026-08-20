@@ -76,11 +76,65 @@ def cmdFormat (path : String) : IO UInt32 := do
       IO.print (Sexpr.renderScript 80 (Il.scriptToSexprs script))
       return 0
 
+/-- Validate a dumped IL script (arc-2 stage 4; valid.ml mirror).
+Default fuel is generous scaffolding — exhaustion is a loud error. -/
+def cmdValidate (path : String) (fuel : Nat) : IO UInt32 := do
+  let input ← IO.FS.readBinFile path
+  match Sexpr.parse input with
+  | .error e => IO.eprintln s!"SEXPR PARSE FAIL {path}: {e}"; return 1
+  | .ok xs =>
+    match Il.readScript xs with
+    | .error e => IO.eprintln s!"IL READ FAIL {path}: {e}"; return 1
+    | .ok script =>
+      match (Il.Valid.validScript fuel script).run {} with
+      | .ok _ =>
+        IO.println s!"validate OK: {path} ({script.length} defs)"
+        return 0
+      | .error (.error msg) =>
+        IO.eprintln s!"VALIDATE FAIL {path}: {msg}"; return 1
+      | .error .fuel =>
+        IO.eprintln s!"VALIDATE FUEL EXHAUSTED {path} (fuel {fuel})"; return 1
+      | .error .irred =>
+        IO.eprintln s!"VALIDATE FAIL {path}: irreducible"; return 1
+      | .error (.failure msg) =>
+        IO.eprintln s!"VALIDATE FAIL {path}: internal failure {msg}"; return 1
+
+/-- Debug: validate def-by-def, printing progress (loop isolation). -/
+def cmdValidateTrace (path : String) (fuel : Nat) : IO UInt32 := do
+  let input ← IO.FS.readBinFile path
+  match Sexpr.parse input with
+  | .error e => IO.eprintln s!"SEXPR PARSE FAIL {path}: {e}"; return 1
+  | .ok xs =>
+    match Il.readScript xs with
+    | .error e => IO.eprintln s!"IL READ FAIL {path}: {e}"; return 1
+    | .ok script => do
+      let mut env := Il.Env.empty
+      let mut st : Il.Fresh.St := {}
+      let mut i := 0
+      for d in script do
+        let nm := match d with
+          | .typD x _ _ _ => s!"typ {x}"
+          | .relD x _ _ _ _ _ => s!"rel {x}"
+          | .decD x _ _ _ _ => s!"def {x}"
+          | .gramD x _ _ _ _ => s!"gram {x}"
+          | .recD _ _ => "rec"
+        IO.println s!"[{i}] {nm}"
+        (← IO.getStdout).flush
+        match (Il.Valid.validDef env fuel d).run st with
+        | .ok (env', st') => env := env'; st := st'
+        | .error e => IO.eprintln s!"  FAIL: {reprStr e}"; return 1
+        i := i + 1
+      IO.println "validate-trace OK"
+      return 0
+
 def main (args : List String) : IO UInt32 := do
   match args with
+  | ["validate-trace", path, f] => cmdValidateTrace path (f.toNat!)
   | ["roundtrip-sexpr", path] => cmdRoundtripSexpr path
   | ["roundtrip", path] => cmdRoundtrip path
   | ["format", path] => cmdFormat path
+  | ["validate", path] => cmdValidate path 1000000
+  | ["validate", path, f] => cmdValidate path (f.toNat!)
   | _ =>
     IO.eprintln "usage: spectecil (roundtrip|roundtrip-sexpr) <file>"
     return 2
