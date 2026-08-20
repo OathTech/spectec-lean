@@ -6,13 +6,18 @@ adopted from the sibling projects (`../golean/CLAUDE.md`,
 `../cerberus-lean-proj/CLAUDE.md`, `../ACL2Lean/CLAUDE.md`); when a rule here
 is unclear, the sibling's fuller statement governs its intent.
 
-**Goal.** (1) A Lean semantics for SpecTec — a deep embedding of SpecTec's IL
-with an interpreter/semantics in Lean, replacing the OCaml runtime with an
-all-Lean implementation that mirrors its structure. (2) Use it to define a
-semantics for Go surface syntax, feeding the Go verifier in `../golean`.
-Research materials and the architecture survey: `deps/README.md` (gitignored
-reference checkouts — consult them instead of guessing; the OCaml sources in
-`deps/spectec/spectec/src/` are the primary source for every porting question).
+**Goal.** A **generic SpecTec-in-Lean toolkit**: a deep embedding of
+SpecTec's IL with validation and a faithful (unoptimized) semantics in Lean,
+mirroring the OCaml toolchain's structure and differentially tested against
+it on the Wasm spec — SpecTec specs thereby get a Lean-native meaning. First
+client: a human-readable Go spec in SpecTec and the **frontend-soundness
+theorem** `SpecTecSem(P) ≃ GoCoreSem(frontend(P))` for the Go verifier in
+`../golean`. The toolkit stays language-agnostic (Go enters only through
+declared extension points). Full objective + ratified decisions D1-D4:
+`docs/2026-08-20_objective-go-frontend-soundness.md`. Research materials:
+`deps/README.md` (gitignored reference checkouts — consult them instead of
+guessing; the OCaml sources in `deps/spectec/spectec/src/` are the primary
+source for every porting question).
 
 **Staging (decided 2026-08-20, in conversation with Mike — first arc charters
 refine this):** (a) build the OCaml tool, dump elaborated IL via `backend-ast`
