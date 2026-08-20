@@ -1,18 +1,55 @@
-(def "synthInt" int (clause (num (int +7))) (clause (num (int -7))))
-(def "synthRat" rat (clause (num (rat 1/2))) (clause (num (rat -1/2))))
-(def "synthImpl" bool (clause (bin impl bool (bool true) (bool false))))
-(def "synthUnopt" nat (clause (unopt (opt (num (nat 1))))))
-(def "synthLet" nat (clause (var "x") (let (var "x") (num (nat 2)))))
-(def "synthNeg" nat (clause (num (nat 0)) (neg (if (bool false)))))
-(def "synthUn" int (clause (un minus int (un plus int (num (int +3))))))
+(def
+  "synthInt"
+  int
+  (clause (! (num (int +7)) int))
+  (clause (! (num (int -7)) int))
+)
+(def
+  "synthRat"
+  rat
+  (clause (! (num (rat 1/2)) rat))
+  (clause (! (num (rat -1/2)) rat))
+)
+(def
+  "synthImpl"
+  bool
+  (clause (! (bin impl bool (! (bool true) bool) (! (bool false) bool)) bool))
+)
+(def
+  "synthUnopt"
+  nat
+  (clause (! (unopt (! (opt (! (num (nat 1)) nat)) (iter nat opt))) nat))
+)
+(def
+  "synthLet"
+  nat
+  (clause (! (var "x") nat) (let (! (var "x") nat) (! (num (nat 2)) nat)))
+)
+(def
+  "synthNeg"
+  nat
+  (clause (! (num (nat 0)) nat) (neg (if (! (bool false) bool))))
+)
+(def
+  "synthUn"
+  int
+  (clause (! (un minus int (! (un plus int (! (num (int +3)) int)) int)) int))
+)
 (typ "synthT" (inst (alias (iter nat list1))))
 (rel "synthMixA" (seq (a "x")) nat)
 (rel "synthMixB" (seq (a "x") %) nat)
 (rel "synthOp" (infix % (s sqarrow) %) nat)
 (rel "synthBk" (brack (s lbrack) % (s rbrack)) nat)
-(rel "synthR2" (a "R") nat (rule "r" (a "R") (num (nat 1))))
+(rel "synthR2" (a "R") nat (rule "r" (a "R") (! (num (nat 1)) nat)))
 (typ "synthS" (inst (struct (field (a "F") nat) (field (s dot) nat))))
-(def "synthDot" nat (clause (dot (var "s") (a "F"))))
-(def "sL" nat (clause (var "x") (let (exp "x" nat) (var "x") (num (nat 3)))))
-(def "synthAt" (at "f.spectec" 1 0 2 5) nat (clause (num (nat 1))))
+(def "synthDot" nat (clause (! (dot (! (var "s") (var "str")) (a "F")) nat)))
+(def
+  "sL"
+  nat
+  (clause
+    (! (var "x") nat)
+    (let (exp "x" nat) (! (var "x") nat) (! (num (nat 3)) nat))
+  )
+)
+(def "synthAt" (at "f.spectec" 1 0 2 5) nat (clause (! (num (nat 1)) nat)))
 

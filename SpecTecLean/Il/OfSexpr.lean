@@ -366,8 +366,14 @@ def readTypCase (x : Sexpr) : ReadM TypCase :=
     .ok (.mk op t qs prs)
   | _ => fail "typcase" x "expected (case mixop typ …)"
 
-/-- print.ml:98-129 inverse. Case order follows print.ml. -/
+/-- Patched wrapper inverse: `(! <it> <note>)` (D3b). -/
 def readExp (x : Sexpr) : ReadM Exp :=
+  match x with
+  | .node "!" [it, note] => do .ok (.mk (← readExp' it) (← readTyp note))
+  | _ => fail "exp" x "expected (! exp' typ)"
+
+/-- print.ml:98-129 inverse. Case order follows print.ml. -/
+def readExp' (x : Sexpr) : ReadM Exp' :=
   match x with
   | .node "var" [xid] => do .ok (.varE (← readId xid))
   | .node "bool" [b] => do .ok (.boolE (← readBool b))
@@ -432,8 +438,14 @@ def readExpField (x : Sexpr) : ReadM ExpField :=
   | .node "field" [a, e] => do .ok (.mk (← readAtom a) (← readExp e))
   | _ => fail "expfield" x "expected (field atom exp)"
 
-/-- print.ml:134-139 inverse. -/
+/-- Patched wrapper inverse: `(! <it> <note>)` (D3b). -/
 def readPath (x : Sexpr) : ReadM Path :=
+  match x with
+  | .node "!" [it, note] => do .ok (.mk (← readPath' it) (← readTyp note))
+  | _ => fail "path" x "expected (! path' typ)"
+
+/-- print.ml:134-139 inverse. -/
+def readPath' (x : Sexpr) : ReadM Path' :=
   match x with
   | .atom "root" => .ok .rootP
   | .node "idx" [p, e] => do .ok (.idxP (← readPath p) (← readExp e))

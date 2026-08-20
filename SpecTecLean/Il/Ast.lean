@@ -135,8 +135,15 @@ inductive TypField where
 inductive TypCase where
   | mk (op : Mixop) (t : Typ) (quants : List Param) (prems : List Prem)
 
-/-- ast.ml:54-84 `exp'`. Constructor order follows ast.ml. -/
+/-- ast.ml:53 `exp = (exp', typ) note_phrase`: every expression carries
+its TYPE annotation (`note`), dumped by patch D3b as `(! <it> <note>)` —
+the semantic layer consumes notes (subst.ml:195, eval.ml ×17, valid.ml).
+Region still dropped (expression positions undumped). -/
 inductive Exp where
+  | mk (it : Exp') (note : Typ)
+
+/-- ast.ml:54-84 `exp'`. Constructor order follows ast.ml. -/
+inductive Exp' where
   | varE (x : Id)                            -- VarE
   | boolE (b : Bool)                         -- BoolE
   | numE (n : Num)                           -- NumE
@@ -172,8 +179,12 @@ inductive Exp where
 inductive ExpField where
   | mk (atom : Atom) (e : Exp)
 
-/-- ast.ml:89-93 `path'`. -/
+/-- ast.ml:88 `path = (path', typ) note_phrase` (patch D3b `(! …)`). -/
 inductive Path where
+  | mk (it : Path') (note : Typ)
+
+/-- ast.ml:89-93 `path'`. -/
+inductive Path' where
   | rootP                                    -- RootP
   | idxP (p : Path) (e : Exp)                -- IdxP
   | sliceP (p : Path) (e1 e2 : Exp)          -- SliceP
@@ -226,9 +237,15 @@ inductive Prem where
 end
 
 deriving instance Repr for Iter, Typ, TypBind, DefTyp, TypField, TypCase,
-  Exp, ExpField, Path, IterExp, Dom, Sym, Arg, Param, Prem
+  Exp, Exp', ExpField, Path, Path', IterExp, Dom, Sym, Arg, Param, Prem
 deriving instance BEq for Iter, Typ, TypBind, DefTyp, TypField, TypCase,
-  Exp, ExpField, Path, IterExp, Dom, Sym, Arg, Param, Prem
+  Exp, Exp', ExpField, Path, Path', IterExp, Dom, Sym, Arg, Param, Prem
+
+/-- Accessors mirroring `phrase` projections (`.it` / `.note`). -/
+def Exp.it : Exp → Exp' | .mk it _ => it
+def Exp.note : Exp → Typ | .mk _ note => note
+def Path.it : Path → Path' | .mk it _ => it
+def Path.note : Path → Typ | .mk _ note => note
 
 /-- ast.ml:129 `quant = param`. -/
 abbrev Quant := Param

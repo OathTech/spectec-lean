@@ -63,10 +63,24 @@ def cmdRoundtrip (path : String) : IO UInt32 := do
         IO.eprintln s!"ROUNDTRIP FAIL {path}: {diffReport input out}"
         return 1
 
+/-- Parse + IL-read a file and print its canonical rendering (used to
+canonicalize hand-authored corpus content; layout is the printer's). -/
+def cmdFormat (path : String) : IO UInt32 := do
+  let input ← IO.FS.readBinFile path
+  match Sexpr.parse input with
+  | .error e => IO.eprintln s!"SEXPR PARSE FAIL {path}: {e}"; return 1
+  | .ok xs =>
+    match Il.readScript xs with
+    | .error e => IO.eprintln s!"IL READ FAIL {path}: {e}"; return 1
+    | .ok script =>
+      IO.print (Sexpr.renderScript 80 (Il.scriptToSexprs script))
+      return 0
+
 def main (args : List String) : IO UInt32 := do
   match args with
   | ["roundtrip-sexpr", path] => cmdRoundtripSexpr path
   | ["roundtrip", path] => cmdRoundtrip path
+  | ["format", path] => cmdFormat path
   | _ =>
     IO.eprintln "usage: spectecil (roundtrip|roundtrip-sexpr) <file>"
     return 2

@@ -169,8 +169,12 @@ def typcaseToSexpr : TypCase → Sexpr
       ++ qs.attach.map (fun ⟨q, _⟩ => paramToSexpr q)
       ++ prs.attach.map (fun ⟨p, _⟩ => premToSexpr p))
 
-/-- print.ml:98-129 `exp`. Case order follows print.ml. -/
+/-- Patched `exp` wrapper: `(! <it> <note>)` (D3b). -/
 def expToSexpr : Exp → Sexpr
+  | .mk it note => .node "!" [exp'ToSexpr it, typToSexpr note]
+
+/-- print.ml:98-129 `exp'`. Case order follows print.ml. -/
+def exp'ToSexpr : Exp' → Sexpr
   | .varE x => .node "var" [idToSexpr x]
   | .boolE b => .node "bool" [boolToSexpr b]
   | .numE n => .node "num" [numToSexpr n]
@@ -216,8 +220,12 @@ def expToSexpr : Exp → Sexpr
 def expfieldToSexpr : ExpField → Sexpr
   | .mk at_ e => .node "field" [atomToSexpr at_, expToSexpr e]
 
-/-- print.ml:134-139 `path` (dot atom structural, patched). -/
+/-- Patched `path` wrapper: `(! <it> <note>)` (D3b). -/
 def pathToSexpr : Path → Sexpr
+  | .mk it note => .node "!" [path'ToSexpr it, typToSexpr note]
+
+/-- print.ml:134-139 `path'` (dot atom structural, patched). -/
+def path'ToSexpr : Path' → Sexpr
   | .rootP => .atom "root"
   | .idxP p e => .node "idx" [pathToSexpr p, expToSexpr e]
   | .sliceP p e1 e2 =>

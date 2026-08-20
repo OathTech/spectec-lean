@@ -2,10 +2,12 @@
 # explained decision committed with the reason (see CLAUDE.md).
 # Format: <key> <value>
 spectec-commit acc6e834ff403c82554d081237f327346190ad96
-# RE-PIN 2026-08-20 (arc 2 stage 1, decision D3): dumps switched to the
+# RE-PIN 2026-08-20 (arc 2 stage 1, D3 + D3b): dumps switched to the
 # vendored patch's --ast-structured lossless format (structural
-# mixops/atoms, LetPr binders, def-level regions). The ci pin-check now
+# mixops/atoms, LetPr binders, def-level regions, and — D3b — exp/path
+# TYPE NOTES as (! it note) wrappers: the semantic layer consumes notes
+# (subst.ml:195, eval.ml x17, valid.ml). The ci pin-check now
 # requires the deps worktree diff to equal patches/*.patch exactly.
-wasm3-il-sexpr-sha256 0afd355504097c2035973ef13b418103529757e91f6b779ee9b502ddf8ca3a39
-wasm1-il-sexpr-sha256 88f0caf6d1cadfc6d44abc0174f9f66bd16ad2a17f588cb8052dd838e8c7c52b
-wasm2-il-sexpr-sha256 cce2e6a91448e72df61b31d981eef5a01cf4ceb9ed82c55b5016a288fe5be4a3
+wasm3-il-sexpr-sha256 deef971223cd875bfda9fa5ddc4f57a262b3028344825ca3cfb0acfe9d2adce7
+wasm1-il-sexpr-sha256 d7c06ea74b93ab55db06cd8d8c9a6b0e0527ee99695cec6ea9a4ed39cf789efc
+wasm2-il-sexpr-sha256 482a9a4cfb12cbefac24ee3669552f4323fd6c9d36eb18c2337c63dc1dfbbb26
