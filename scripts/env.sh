@@ -10,4 +10,7 @@ export OPAMSWITCH="$_repo"
 export OPAMYES=1
 eval "$(opam env --root="$OPAMROOT" --switch="$_repo" --set-root --set-switch 2>/dev/null)"
 
+# Lake/git dep fetches resolve to local mirrors (deps/mirrors/) — offline-safe.
+export GIT_CONFIG_GLOBAL="$_repo/scripts/gitconfig"
+
 unset _repo

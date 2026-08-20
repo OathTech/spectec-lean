@@ -54,9 +54,21 @@ lean4-wip worktree (`deps/spectec-lean4-wip/spectec`):
 
 - Works with no network: everything above (opam switch fully built;
   `dune build` needs nothing external; elan toolchains installed).
+- **Lake deps offline (verified 2026-08-20):** bare mirrors in
+  `deps/mirrors/` (batteries, iris-lean) + insteadOf redirects in
+  `scripts/gitconfig`, active via `GIT_CONFIG_GLOBAL` (exported by
+  `scripts/env.sh`; includes `~/.gitconfig` back for identity). Smoke
+  test passed: scratch Lake project on leanprover/lean4:v4.33.0
+  requiring `batteries @ v4.33.0` built green through `scripts/capped`;
+  redirect PROVEN active (mirror moved aside → fetch fails on the local
+  path, no network fallback). batteries release tags track Lean
+  versions; v4.33.0 is the newest matching an installed toolchain.
 - Needs network (do before entering the sandbox, or not at all):
   `opam install` of NEW packages (root's download-cache covers only what
-  was installed), `elan toolchain install` of new versions, git fetches
-  in `deps/` (shallow clones; `deps/README.md` lists remotes).
+  was installed), `elan toolchain install` of new versions, NEW Lake
+  deps beyond the mirrored two (notably mathlib, whose olean cache also
+  needs Reservoir — out of scope unless decided), git fetches/pushes in
+  `deps/` or upstream bumps (arc-level decisions), the two
+  browser-only ACM papers listed in `deps/README.md`.
 - opam switch/root config is repo-local, so even switch-level operations
   work in-sandbox provided the sandbox grants the repo folder.

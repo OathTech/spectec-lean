@@ -1,0 +1,19 @@
+# Redirect GitHub dep URLs to local bare mirrors (deps/mirrors/) so Lake/git
+# dependency fetches work with no network. Active ONLY via GIT_CONFIG_GLOBAL
+# (scripts/env.sh exports it) — never installed globally. Pattern from
+# ../cerberus-lean-proj/deps/gitconfig.
+#
+# To refresh mirrors (network required):
+#   for m in deps/mirrors/*.git; do GIT_CONFIG_GLOBAL=/dev/null git -C "$m" fetch; done
+
+# GIT_CONFIG_GLOBAL REPLACES ~/.gitconfig, so pull it back in (identity etc.).
+[include]
+	path = /home/dev/.gitconfig
+
+[url "/home/dev/projects/spectec-lean/deps/mirrors/batteries.git"]
+	insteadOf = https://github.com/leanprover-community/batteries
+	insteadOf = https://github.com/leanprover-community/batteries.git
+
+[url "/home/dev/projects/spectec-lean/deps/mirrors/iris-lean.git"]
+	insteadOf = https://github.com/leanprover-community/iris-lean
+	insteadOf = https://github.com/leanprover-community/iris-lean.git
