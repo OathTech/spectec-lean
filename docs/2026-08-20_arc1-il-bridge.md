@@ -78,6 +78,44 @@ equality against the original — recorded here as a deliberate, documented
 divergence. If the IL AST turns out to be mid-refactor upstream such that
 the dump doesn't correspond to `il/ast.ml` at the pin, stop and report.
 
-## Results
+## Results (2026-08-20, autonomous run — see docs/2026-08-20_arc1-log.md)
 
-(to be written at arc end)
+**DONE: all items green.** `scripts/ci` exits 0 and checks: upstream pin
+(spectec @ acc6e834), regenerated wasm-3.0 IL dump sha256 vs baseline,
+capped warning-free `lake build`, hygiene scan (0 `partial def`, 0 `sorry`,
+0 `native_decide` — mechanically grepped), Sexpr-layer and full-pipeline
+round-trips, and three fail-closed probes (unknown head / truncation /
+non-canonical literal — all rejected, exit 1).
+
+Headline numbers (all verified by running, 2026-08-20):
+
+- wasm-3.0: 973 defs, 1,549,779 bytes — **byte-identical** full round-trip
+  (text → Sexpr → IL → Sexpr → text), ~60 ms.
+- Extra corpora beyond charter scope, same pinned commit: wasm-1.0
+  (337 defs, 339,564 bytes) and wasm-2.0 (494 defs, 841,425 bytes) — both
+  byte-identical; added to `scripts/ci` as roundtrip-only checks.
+
+Modules: `SpecTecLean/Sexpr.lean` (layout mirror of util/sexpr.ml +
+fail-closed parser), `SpecTecLean/OcamlEscape.lean` (String.escaped
+mirror + canonical inverse), `SpecTecLean/Il/Ast.lean` (ast.ml mirror,
+divergences documented in header), `SpecTecLean/Il/ToSexpr.lean`
+(print.ml mirror), `SpecTecLean/Il/OfSexpr.lean` (fail-closed inverse
+reader), `Main.lean` (`spectecil roundtrip[-sexpr]`).
+
+**Open questions parked for later arcs** (also in the log):
+
+1. **Structured mixops/atoms.** The dump's `Mixop.to_string` rendering is
+   lossy (structure + arity erased, non-injective). IL validation/semantics
+   will likely need the structure ⇒ either patch backend-ast upstream-style
+   to dump mixops structurally (arc-level upstream decision) or prove
+   string-tokens sufficient for the semantics' uses (mixop equality within
+   one dump).
+2. **LetPr binders** are dropped by the printer (print.ml:166) — same
+   remedy if the semantics needs them.
+3. Positions are absent from the dump; error reporting in later arcs will
+   want them (upstream `--ast` flag addition, or live without).
+
+Hard boundaries respected: no merge, no push, no upstream bump, no
+semantics work. Audit ask: POSED (pre-merge adversarial audit — primary
+dimension OCaml↔Lean correspondence per CLAUDE.md; user decides scope or
+waiver).

@@ -74,8 +74,7 @@ authoritative corpus. Rules, from day one:
   malformed input → explicit error at the boundary. Never a silent
   approximation. Parsers hard-fail on unexpected input; no `| _ => none`
   default-swallowing. A visible red beats a hidden wrong answer.
-- **One-command gate: `scripts/ci`** (arc-1 deliverable; until it exists,
-  say so rather than claiming a gate ran). Green before any checkpoint
+- **One-command gate: `scripts/ci`.** Green before any checkpoint
   claim, audit, or merge. A green build is not evidence of correctness —
   the differential failing-set diff against a tracked baseline is the
   signal. Re-pin baselines only on a deliberate, explained coverage change,

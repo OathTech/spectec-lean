@@ -69,6 +69,15 @@ BIN=./.lake/build/bin/spectecil
 "$BIN" roundtrip-sexpr artifacts/ci-dump.sexpr || fail "Sexpr-layer roundtrip failed"
 "$BIN" roundtrip artifacts/ci-dump.sexpr || fail "full IL roundtrip failed"
 
+# --- 5b. extra corpora (same pinned commit; roundtrip-only, no sha pin —
+# the commit pin already fixes their content) ---------------------------
+for v in 1.0 2.0; do
+  "$SPECTEC" deps/spectec/specification/wasm-$v/*.spectec --ast \
+    -o "artifacts/ci-dump-w$v.sexpr" || fail "OCaml spectec --ast failed (wasm-$v)"
+  "$BIN" roundtrip "artifacts/ci-dump-w$v.sexpr" || fail "roundtrip failed (wasm-$v)"
+  rm -f "artifacts/ci-dump-w$v.sexpr"
+done
+
 # --- 6. fail-closed probes ---------------------------------------------
 probe() { # name, transform (stdin->stdout)
   local name=$1; shift
