@@ -12,4 +12,5 @@ import SpecTecLean.Il.Env
 import SpecTecLean.Il.Subst
 import SpecTecLean.Il.Eval
 import SpecTecLean.Il.Valid
+import SpecTecLean.Il.Rel
 import SpecTecLean.Probes

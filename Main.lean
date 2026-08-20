@@ -127,8 +127,37 @@ def cmdValidateTrace (path : String) (fuel : Nat) : IO UInt32 := do
       IO.println "validate-trace OK"
       return 0
 
+/-- Stage-6 smoke: derive Step_pure on [NOP] (expect []). -/
+def cmdDeriveSmoke (path : String) : IO UInt32 := do
+  let input ← IO.FS.readBinFile path
+  match Sexpr.parse input with
+  | .error e => IO.eprintln s!"SEXPR PARSE FAIL: {e}"; return 1
+  | .ok xs =>
+    match Il.readScript xs with
+    | .error e => IO.eprintln s!"IL READ FAIL: {e}"; return 1
+    | .ok script =>
+      let env := Il.Env.ofScript script
+      let instrT : Il.Typ := .varT "instr" []
+      let nop : Il.Exp := .mk
+        (.caseE (.atom (.atom "NOP")) (.mk (.tupE []) (.tupT [])))
+        instrT
+      let ins : Il.Exp := .mk (.listE [nop]) (.iterT instrT .list)
+      match env.findRel? "Step_pure" with
+      | none => IO.eprintln "Step_pure not found"; return 1
+      | some (_, mixop, _, rules) =>
+        match (Il.Rel.derive env 100000 "Step_pure" mixop rules [ins] 1).run {} with
+        | .ok (.ok outs, _) =>
+          IO.println s!"derive OK: {outs.length} outputs"
+          for o in outs do
+            IO.println ((SpecTecLean.Sexpr.pp 0 200 (Il.expToSexpr o)).2)
+          return 0
+        | .ok (.noRule, _) => IO.eprintln "derive: no rule applies"; return 1
+        | .ok (.stuck m, _) => IO.eprintln s!"derive: stuck {m}"; return 1
+        | .error e => IO.eprintln s!"derive: {reprStr e}"; return 1
+
 def main (args : List String) : IO UInt32 := do
   match args with
+  | ["derive-smoke", path] => cmdDeriveSmoke path
   | ["validate-trace", path, f] => cmdValidateTrace path (f.toNat!)
   | ["roundtrip-sexpr", path] => cmdRoundtripSexpr path
   | ["roundtrip", path] => cmdRoundtrip path
