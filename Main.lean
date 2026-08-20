@@ -37,9 +37,31 @@ def cmdRoundtripSexpr (path : String) : IO UInt32 := do
       IO.eprintln s!"ROUNDTRIP FAIL {path}: {diffReport input out}"
       return 1
 
+/-- text → Sexpr → IL → Sexpr → text, byte-identical (charter DONE gate). -/
+def cmdRoundtrip (path : String) : IO UInt32 := do
+  let input ← IO.FS.readBinFile path
+  match Sexpr.parse input with
+  | .error e =>
+    IO.eprintln s!"SEXPR PARSE FAIL {path}: {e}"
+    return 1
+  | .ok xs =>
+    match Il.readScript xs with
+    | .error e =>
+      IO.eprintln s!"IL READ FAIL {path}: {e}"
+      return 1
+    | .ok script =>
+      let out := (Sexpr.renderScript 80 (Il.scriptToSexprs script)).toUTF8
+      if out == input then
+        IO.println s!"roundtrip OK: {path} ({script.length} defs, {input.size} bytes byte-identical)"
+        return 0
+      else
+        IO.eprintln s!"ROUNDTRIP FAIL {path}: {diffReport input out}"
+        return 1
+
 def main (args : List String) : IO UInt32 := do
   match args with
   | ["roundtrip-sexpr", path] => cmdRoundtripSexpr path
+  | ["roundtrip", path] => cmdRoundtrip path
   | _ =>
-    IO.eprintln "usage: spectecil roundtrip-sexpr <file>"
+    IO.eprintln "usage: spectecil (roundtrip|roundtrip-sexpr) <file>"
     return 2
