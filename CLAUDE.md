@@ -143,6 +143,30 @@ authoritative corpus. Rules, from day one:
   blindly): reviewers/verifiers Opus-class; delicate semantics/proof work
   Fable; mechanical batches Opus.
 
+## Worktree lanes (adopted from golean, adapted 2026-08-20)
+
+Parallel buildout happens in **worktree lanes**: `scripts/new-worktree.sh
+<lane> [base]` creates `.claude/worktrees/<lane>` (branch = lane name),
+symlinks the shared untracked state (`deps/`, `.opam/`, `_opam/` — shared
+switch: never add/remove opam packages from a lane), primes `.lake`, and
+keeps `artifacts/` lane-local (ci scratch must not collide). Verified:
+`scripts/ci` runs green inside a lane. Rules:
+
+- **Worktrees live inside the repo** (`.claude/worktrees/`) — the sandbox
+  grant stops at the repo folder.
+- **The primary checkout stays parked on `main`** (operator coordinates
+  landings); lanes own branches. ONE WRITER PER WORKTREE, always.
+- **Concurrent lanes own disjoint trees.** One lane at a time owns the
+  `SpecTecLean/` core + `baselines/` (pins don't merge textually);
+  parallel lanes take disjoint scopes (docs, tooling, spec sources).
+  Overlapping work runs sequentially — worktrees isolate builds, not
+  intent.
+- **Landing is the unchanged merge protocol** (rebase → gate → audit ask
+  → ff-only), serialized on `main`. Retire lanes with
+  `git worktree remove`; snapshot dirty worktrees before risky git ops.
+- Mind the memory-cap budget when running several capped builds at once
+  (`SPECTEC_MEM_MAX` to trim per-lane caps or stagger).
+
 ## Long-cycle / delegated work
 
 - Any agent-proposed goal includes an **escape-hatch early-exit** the agent
