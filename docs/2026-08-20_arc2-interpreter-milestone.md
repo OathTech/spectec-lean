@@ -144,27 +144,46 @@ and not claimed.
   `#guard`s in SpecTecLean/Probes.lean; sha-pinned dumps).
 - Validator 3/3 corpora + ≥5 mutation probes: **MET** (973/337/494 defs
   validate; 5/5 probes rejected).
-- Harness classifies N/N across 97/97 files: **MET** (2026-08-21,
-  post-exit continuation): **20,029/20,029 assertions, zero
-  unclassified, zero false passes** (baselines/wast-differential.tsv;
-  scripts/wast-classify + wast-rollup). Denominator is the harness's
-  own metric — assertions parsed from the 97 driver command streams;
-  the charter's 19,841 was a pre-arc estimate by an unstated count
-  (textual `assert_` grep gives 19,984). Honest-classes caveat, stated
-  plainly: only 169 assertions PASS; the dominant classes are
-  resource-bounded (error=11,342 instantiation-timeout cascades,
-  timeout=4,822, resource=27) and driver-boundary unsupported (3,585
-  across 6 classes); fail=18 are visible cascades of errored grow
-  actions; stuck=66. The classification is complete and honest; it is
-  NOT a claim of execution coverage.
+- Harness classifies N/N across 97/97 files: **MET** (2026-08-21;
+  numbers below are from the POST-AUDIT-FIX engine, arc2-fix — the
+  audit found the earlier prose cited superseded totals and
+  mischaracterized the error class; see docs/2026-08-21_arc2-audit.md
+  finding 8): **20,029/20,029 assertions, zero unclassified, zero
+  false passes** (baselines/wast-differential.tsv; scripts/
+  wast-classify + wast-rollup, 120 s/file wall budget). Denominator is
+  the harness's own metric — assertions parsed from the 97 driver
+  command streams; the charter's 19,841 was a pre-arc estimate by an
+  unstated count (textual `assert_` grep gives 19,984). Honest-classes
+  statement: pass=90; fail=17 (cascades of earlier errored/skipped
+  actions — none is a fresh decided mismatch); stuck=45; the dominant
+  classes are error=11,502 — of which ~11.3k are ONE systematic engine
+  gap, `entry call invoke: no clause applies`, occurring AFTER
+  successful instantiation (NOT timeouts; arc-3a's first diagnostic
+  target) — timeout=4,517 and resource=27 (wall/memory budget), and
+  driver-boundary unsupported=3,831 across 7 classes. Pass counts are
+  wall-budget-limited, not correctness-limited: vs the pre-fix engine,
+  the flip matrix shows ZERO pass→fail flips; 13 stuck→pass (the
+  trap-rule BLOCKER fix), 49 modules now honestly
+  `unsupported:imports` (fail-closed linking; this converted
+  ref_func's two FALSE passes and one mis-linked fail into visible
+  errors), and the per-command slowdown (~1.7x, deriveCache soundness
+  restriction + three-valued premise checking) moves the timeout
+  boundary earlier (const.wast: row 738 → 422 within budget, pass
+  152 → 47). The classification is complete and honest; it is NOT a
+  claim of execution coverage.
 - Pass floor (20 integer/control files): **NOT MET** (early exit).
 - Declared-unsupported enumeration: **MET** — full-corpus per-class
-  counts in baselines/wast-differential.tsv grand totals:
-  assert_return-pattern=1,968 (NaN patterns/vectors/null args),
-  assert_malformed=1,039 (text/binary parsing = harness boundary),
-  assert_invalid=510 (validation not executed; Module_ok is an assumed
-  relation), assert_unlinkable=37, assert_trap-action=20,
-  assert_exhaustion=11 (fuel semantics).
+  counts in baselines/wast-differential.tsv grand totals (post-fix):
+  assert_return-pattern=2,000 (NaN patterns/vectors/null args),
+  assert_malformed=1,073 (text/binary parsing = harness boundary),
+  assert_invalid=580 (validation not executed; Module_ok is an assumed
+  relation), assert_unlinkable=138, assert_trap-action=22,
+  assert_exhaustion=11 (fuel semantics), assert_uninstantiable=7.
+  (Counts grew vs the pre-fix sweep because fail-closed imports let
+  more files finish inside the wall budget, so driver-boundary rows
+  previously masked by `timeout` now count as themselves.) Module-level
+  `unsupported:imports` (49 modules) is a runner boundary: no linker in
+  the harness.
 - Hygiene (0 partial/sorry/native_decide/heartbeat raises): **MET**
   (ci-enforced grep).
 - Citations/divergence docs/log/results/audit ask: **MET** (this
@@ -177,8 +196,10 @@ and not claimed.
 forward-guess premise order) → export lookup → `$invoke` →
 `Step/ctxt-*`, `call_ref`, frame/label exits → assert_return PASS. This
 is now a ci-gated differential baseline. nop.wast (89 commands, ~20
-functions, table+elem): module decodes and instantiates; first asserts
-pass.
+functions, table+elem): module decodes and instantiates within a larger
+budget; its asserts do NOT pass within the sweep budget (baseline: 87
+timeout) — an earlier draft of this sentence overstated this (audit
+finding, docs/2026-08-21_arc2-audit.md #8).
 
 ### Measurements (the exit evidence)
 
