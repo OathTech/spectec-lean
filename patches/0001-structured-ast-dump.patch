@@ -157,10 +157,10 @@ index a26937f..51860b2 100644
  val output_exp : out_channel -> Config.t -> Il.Ast.exp -> unit
  val output_def : out_channel -> Config.t -> Il.Ast.def -> unit
 diff --git a/spectec/src/exe-spectec/main.ml b/spectec/src/exe-spectec/main.ml
-index 246a5f9..223cebc 100644
+index 246a5f9..e9d5641 100644
 --- a/spectec/src/exe-spectec/main.ml
 +++ b/spectec/src/exe-spectec/main.ml
-@@ -71,6 +71,107 @@ let pdsts = ref []   (* patch file arguments *)
+@@ -71,6 +71,108 @@ let pdsts = ref []   (* patch file arguments *)
  let odsts = ref []   (* output file arguments *)
  
  let ast_width = ref Backend_ast.Config.default.width
@@ -207,7 +207,7 @@ index 246a5f9..223cebc 100644
 +      | _ -> failwith "quoted")
 +  in
 +  let ws_action act =
-+    match act.Source.it with
++    try match act.Source.it with
 +    | Invoke (None, name, args) ->
 +      let vals = List.map (fun (a : Script.literal) ->
 +        match a.Source.it with
@@ -218,6 +218,7 @@ index 246a5f9..223cebc 100644
 +        List.fold_left (fun acc v -> acc ^ " " ^ ws_value v) "" vals ^ "))")
 +    | Invoke (Some _, _, _) -> None
 +    | Get _ -> None
++    with Failure _ -> None  (* e.g. NullLit args: whole action unsupported *)
 +  in
 +  let ws_result (r : Script.result) =
 +    match r.Source.it with
@@ -268,7 +269,7 @@ index 246a5f9..223cebc 100644
  let latex_macros = ref false
  
  let print_el = ref false
-@@ -195,6 +296,8 @@ let argspec = Arg.align (
+@@ -195,6 +297,8 @@ let argspec = Arg.align (
  
    "--check", Arg.Unit (fun () -> target := Check), " Check only (default)";
    "--ast", Arg.Unit (fun () -> target := Ast), " Generate AST";
@@ -277,7 +278,7 @@ index 246a5f9..223cebc 100644
    "--latex", Arg.Unit (fun () -> target := Latex), " Generate Latex";
    "--splice-latex", Arg.Unit (fun () -> target := Splice Backend_splice.Config.latex),
      " Splice Sphinx";
-@@ -311,6 +414,12 @@ let () =
+@@ -311,6 +415,12 @@ let () =
      Al.Valid.valid al;
      *)
  

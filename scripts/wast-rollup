@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+"""Roll up artifacts/wast/*.rows into the tracked differential baseline.
+
+Assertion rows only (a cmds line is an assertion iff it starts with
+`(assert` or `(unsupported "assert`); row index = cmds line index.
+Output: baselines/wast-differential.tsv — per-file per-class assertion
+counts plus a grand-total header. Honest-classes contract: every
+assertion appears in exactly one explicit class; `pass` rows are real
+engine passes; undecided work is visible as timeout/resource/fuel/
+stuck/error; driver-boundary items as unsupported:<class>."""
+import glob, os, sys, collections
+
+out = collections.defaultdict(lambda: collections.Counter())
+total = 0
+files = 0
+for cmds in sorted(glob.glob('artifacts/wast/*.cmds')):
+    name = os.path.basename(cmds)[:-5]
+    rows = f'artifacts/wast/{name}.rows'
+    if not os.path.exists(rows):
+        print(f"MISSING rows for {name}", file=sys.stderr); sys.exit(1)
+    lines = open(cmds).read().splitlines()
+    is_assert = [ln.startswith('(assert') or ln.startswith('(unsupported "assert')
+                 for ln in lines]
+    rrows = open(rows).read().splitlines()
+    if len(rrows) != len(lines):
+        print(f"ROW/CMD count mismatch in {name}: {len(rrows)} vs {len(lines)}",
+              file=sys.stderr); sys.exit(1)
+    files += 1
+    for i, r in enumerate(rrows):
+        if not is_assert[i]:
+            continue
+        cls = r.split('\t')[1]
+        out[name][cls] += 1
+        total += 1
+
+classes = collections.Counter()
+for name in out:
+    classes.update(out[name])
+
+with open('baselines/wast-differential.tsv', 'w') as f:
+    f.write(f"# wast differential baseline — {total} assertions / {files} files, "
+            f"all explicitly classified (see scripts/wast-rollup)\n")
+    f.write("# grand totals: " + " ".join(
+        f"{c}={n}" for c, n in sorted(classes.items(), key=lambda kv: -kv[1])) + "\n")
+    for name in sorted(out):
+        for cls, n in sorted(out[name].items()):
+            f.write(f"{name}\t{cls}\t{n}\n")
+print(f"files={files} assertions={total}")
+print("classes:", dict(sorted(classes.items(), key=lambda kv: -kv[1])))
