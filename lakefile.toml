@@ -12,3 +12,12 @@ name = "SpecTecLean"
 [[lean_exe]]
 name = "spectecil"
 root = "Main"
+
+# arc-3b lane-local additions (additive only; [AGENT] logged)
+[[lean_lib]]
+name = "SpecTecLeanAlir"
+roots = ["SpecTecLean.Alir.Ast", "SpecTecLean.Alir.Interp", "SpecTecLean.Alir.Algos", "SpecTecLean.Alir.Agree", "SpecTecLean.Alir.Theorem"]
+
+[[lean_exe]]
+name = "aliragree"
+root = "SpecTecLean.Alir.AgreeMain"
