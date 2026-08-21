@@ -120,6 +120,16 @@ authoritative corpus. Rules, from day one:
   are deleted, narrative lives in charters.
 - **Small slices, honest regressions.** One concern per commit, validated.
   Commit messages state what was verified.
+- **Branch verification is mandatory; main is never worked on.**
+  (Incident 2026-08-21: all of arc 2 landed directly on `main` — the
+  charter branch was silently never created, and the false "branch
+  parked" records were inherited from an unverified session summary.)
+  Before the FIRST commit of any session, and after any context
+  compaction or summary handoff, run `git branch --show-current` and
+  verify the intended arc branch is checked out — create it first if
+  missing. A session summary's claim about git state is unverified
+  until reproduced. Direct user authorization for a specific commit is
+  the only exception, per the merge protocol below.
 - **Merge protocol, exactly** (the sibling protocol, unabridged): all work
   on branches — `main` only with direct user authorization for a specific
   commit; gate green; **the audit ask is unconditional** — the user may
