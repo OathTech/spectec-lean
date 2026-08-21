@@ -58,39 +58,6 @@ def groupLen : Exp → Option Nat
   | .mk (.subE e _ _) _ => groupLen e
   | _ => none
 
-/-- Head atom of a case expression (through SubE), e.g. "CONST". -/
-def headAtom : Exp → Option String
-  | .mk (.subE e _ _) _ => headAtom e
-  | .mk (.caseE op _) _ =>
-    ((MixopEq.flatten op).flatMap id).head?.map XlPrint.atomToString
-  | _ => none
-
-/-- The instruction-chain part of a Step-family conclusion input: either
-a config case `(state ; instrs)` or a bare chain. -/
-def ruleAnchorChain (p : Exp) : Exp :=
-  match p.it with
-  | .caseE _ (.mk (.tupE [_, instrs]) _) => instrs
-  | _ => p
-
-/-- PERF filter (semantics-preserving pruning): the LAST fixed
-(non-iteration) component of a rule's conclusion instruction chain names
-the operative instruction atom; a concrete instruction list lacking that
-atom cannot match (every fixed component must consume a top-level
-element whose head it must equal). Rules without a determinable anchor
-are never skipped. -/
-def ruleAnchor (p : Exp) : Option String :=
-  let fixed := (catChain (ruleAnchorChain p)).filter (fun c => !isVarIter c)
-  match fixed.getLast? with
-  | some c => headAtom c
-  | none => none
-
-/-- Top-level head atoms of a concrete config's instruction list
-(`none` when the shape is not a reduced list — then no rule is skipped). -/
-def concreteHeads (cin : Exp) : Option (List String) :=
-  match (ruleAnchorChain cin).it with
-  | .listE es => some (es.filterMap headAtom)
-  | _ => none
-
 mutual
 
 /-- CPS sequence matcher: match pattern components against a concrete

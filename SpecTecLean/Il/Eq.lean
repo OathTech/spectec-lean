@@ -251,18 +251,6 @@ def eqParams : List Param → List Param → Bool
 
 end
 
-/-- PERF (semantics-preserving): pointer-equal terms are structurally
-identical (Lean shares subtrees through substitution), so `eqExp` may
-short-circuit on `ptrEq`. `implemented_by` reroutes every compiled call
-site — including the recursive ones inside `eqExp'` — so shared big
-subtrees (stores, moduleinsts) compare in O(1). Pure-function contract
-unchanged. -/
-private unsafe def eqExpFastImpl (a b : Exp) : Bool :=
-  ptrEq a b ||
-    (match a, b with
-     | .mk it1 _, .mk it2 _ => eqExp' it1 it2)
-
-attribute [implemented_by eqExpFastImpl] eqExp
 
 
 end SpecTecLean.Il

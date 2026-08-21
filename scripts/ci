@@ -62,11 +62,11 @@ rm -f "$build_log"
 # --- 4. hygiene scan ---------------------------------------------------
 # Word-boundary grep over tracked Lean sources; `partial def`, `sorry`,
 # `native_decide` are all forbidden in anything claimed done (CLAUDE.md).
-if grep -rnE '(^|[^[:alnum:]_])(partial[[:space:]]+def|sorry|native_decide)([^[:alnum:]_]|$)|set_option[[:space:]]+(maxHeartbeats|maxRecDepth)' \
+if grep -rnE '(^|[^[:alnum:]_])(partial[[:space:]]+def|sorry|native_decide|unsafe|implemented_by)([^[:alnum:]_]|$)|set_option[[:space:]]+(maxHeartbeats|maxRecDepth)' \
      --include='*.lean' SpecTecLean/ SpecTecLean.lean Main.lean; then
-  fail "forbidden construct (partial def / sorry / native_decide) in sources"
+  fail "forbidden construct (partial def / sorry / native_decide / unsafe / implemented_by) in sources"
 fi
-note "hygiene OK: no partial def / sorry / native_decide"
+note "hygiene OK: no partial def / sorry / native_decide / unsafe / implemented_by"
 
 # --- 5. round-trips ----------------------------------------------------
 BIN=./.lake/build/bin/spectecil
