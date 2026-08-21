@@ -164,9 +164,13 @@ def isPureNormalExp' : Exp' → Bool
 end
 
 mutual
-/-- Does the expression contain any variable occurrence? Deferral is
-useful ONLY for premises with free variables — a closed premise's
-outcome cannot change under a larger substitution. -/
+/-- Does the expression contain any (expression-)variable occurrence?
+Reference definition: `Free.freeExp` (Free.lean) — this Bool-valued
+mirror must cover the same positions (audit dim1-1/V5 fixed six
+omissions: update/extend paths, listN length exps, subE types, non-exp
+call args, rulePr args, iterPr domains). Deferral/ground gating is
+sound ONLY with a complete test — a "closed" verdict from a porous one
+lets free variables through the ground-solution gate. -/
 def hasVarExp (e : Exp) : Bool :=
   match e with
   | .mk it _ => hasVarExp' it
@@ -184,7 +188,7 @@ def hasVarExp' : Exp' → Bool
   | .liftE e1 => hasVarExp e1
   | .lenE e1 => hasVarExp e1
   | .cvtE e1 _ _ => hasVarExp e1
-  | .subE e1 _ _ => hasVarExp e1
+  | .subE e1 t1 t2 => hasVarExp e1 || hasVarTyp t1 || hasVarTyp t2
   | .binE _ _ e1 e2 => hasVarExp e1 || hasVarExp e2
   | .cmpE _ _ e1 e2 => hasVarExp e1 || hasVarExp e2
   | .compE e1 e2 => hasVarExp e1 || hasVarExp e2
@@ -193,21 +197,83 @@ def hasVarExp' : Exp' → Bool
   | .idxE e1 e2 => hasVarExp e1 || hasVarExp e2
   | .sliceE e1 e2 e3 => hasVarExp e1 || hasVarExp e2 || hasVarExp e3
   | .ifE e1 e2 e3 => hasVarExp e1 || hasVarExp e2 || hasVarExp e3
-  | .updE e1 _ e2 => hasVarExp e1 || hasVarExp e2
-  | .extE e1 _ e2 => hasVarExp e1 || hasVarExp e2
+  | .updE e1 p e2 => hasVarExp e1 || hasVarPath p || hasVarExp e2
+  | .extE e1 p e2 => hasVarExp e1 || hasVarPath p || hasVarExp e2
   | .tupE es => es.attach.any (fun ⟨e1, _⟩ => hasVarExp e1)
   | .listE es => es.attach.any (fun ⟨e1, _⟩ => hasVarExp e1)
   | .optE none => false
   | .optE (some e1) => hasVarExp e1
   | .strE efs =>
     efs.attach.any (fun ⟨f, _⟩ => match f with | .mk _ e1 => hasVarExp e1)
-  | .callE _ args => args.attach.any (fun ⟨a, _⟩ => match a with
-      | .expA e1 => hasVarExp e1
-      | _ => false)
-  | .iterE e1 (.mk _ xes) =>
-    hasVarExp e1 || xes.attach.any (fun ⟨d, _⟩ => match d with
-      | .mk _ ex => hasVarExp ex)
+  | .callE _ args => args.attach.any (fun ⟨a, _⟩ => hasVarArg a)
+  | .iterE e1 ie => hasVarExp e1 || hasVarIterExp ie
   termination_by it => 2 * sizeOf it + 1
+  decreasing_by
+    all_goals simp_wf
+    all_goals first
+      | omega
+      | (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; omega)
+      | (rename_i hmem; have := List.sizeOf_lt_of_mem hmem; simp at this; omega)
+
+def hasVarPath (p : Path) : Bool :=
+  match p with
+  | .mk it _ => hasVarPath' it
+  termination_by 2 * sizeOf p
+
+def hasVarPath' : Path' → Bool
+  | .rootP => false
+  | .idxP p e => hasVarPath p || hasVarExp e
+  | .sliceP p e1 e2 => hasVarPath p || hasVarExp e1 || hasVarExp e2
+  | .dotP p _ => hasVarPath p
+  termination_by it => 2 * sizeOf it + 1
+
+def hasVarTyp : Typ → Bool
+  | .varT _ args => args.attach.any (fun ⟨a, _⟩ => hasVarArg a)
+  | .boolT | .numT _ | .textT => false
+  | .tupT binds => binds.attach.any (fun ⟨b, _⟩ => match b with
+      | .mk _ t => hasVarTyp t)
+  | .iterT t it => hasVarTyp t || hasVarIter it
+  termination_by t => 2 * sizeOf t
+  decreasing_by
+    all_goals simp_wf
+    all_goals first
+      | omega
+      | (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; omega)
+      | (rename_i hmem; have := List.sizeOf_lt_of_mem hmem; simp at this; omega)
+
+def hasVarIter : Iter → Bool
+  | .listN e _ => hasVarExp e
+  | _ => false
+  termination_by it => 2 * sizeOf it
+
+def hasVarIterExp : IterExp → Bool
+  | .mk it xes =>
+    hasVarIter it || xes.attach.any (fun ⟨d, _⟩ => match d with
+      | .mk _ ex => hasVarExp ex)
+  termination_by ie => 2 * sizeOf ie
+  decreasing_by
+    all_goals simp_wf
+    all_goals first
+      | omega
+      | (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; omega)
+      | (rename_i hmem; have := List.sizeOf_lt_of_mem hmem; simp at this; omega)
+
+def hasVarArg : Arg → Bool
+  | .expA e => hasVarExp e
+  | .typA t => hasVarTyp t
+  | .defA _ => false
+  | .gramA g => hasVarSym g
+  termination_by a => 2 * sizeOf a
+
+def hasVarSym : Sym → Bool
+  | .varG _ args => args.attach.any (fun ⟨a, _⟩ => hasVarArg a)
+  | .numG _ | .textG _ | .epsG => false
+  | .seqG gs => gs.attach.any (fun ⟨g, _⟩ => hasVarSym g)
+  | .altG gs => gs.attach.any (fun ⟨g, _⟩ => hasVarSym g)
+  | .rangeG g1 g2 => hasVarSym g1 || hasVarSym g2
+  | .iterG g ie => hasVarSym g || hasVarIterExp ie
+  | .attrG e g => hasVarExp e || hasVarSym g
+  termination_by g => 2 * sizeOf g
   decreasing_by
     all_goals simp_wf
     all_goals first
@@ -217,11 +283,11 @@ def hasVarExp' : Exp' → Bool
 end
 
 def hasVarPrem : Prem → Bool
-  | .rulePr _ _ _ e => hasVarExp e
+  | .rulePr _ args _ e => args.any hasVarArg || hasVarExp e
   | .ifPr e => hasVarExp e
   | .elsePr => false
   | .letPr _ e1 e2 => hasVarExp e1 || hasVarExp e2
-  | .iterPr p _ => hasVarPrem p
+  | .iterPr p ie => hasVarPrem p || hasVarIterExp ie
   | .negPr p => hasVarPrem p
 
 /-- Fail-closed pre-check: real arithmetic unsupported (header). -/
