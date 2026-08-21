@@ -145,7 +145,7 @@ def cmdDeriveSmoke (path : String) : IO UInt32 := do
       match env.findRel? "Step_pure" with
       | none => IO.eprintln "Step_pure not found"; return 1
       | some (_, mixop, _, rules) =>
-        match (Il.Rel.derive env 100000 "Step_pure" mixop rules [ins] 1).run {} with
+        match (Il.Rel.derive env 100000 [] [] "Step_pure" mixop rules [ins] 1).run {} with
         | .ok (.ok outs, _) =>
           IO.println s!"derive OK: {outs.length} outputs"
           for o in outs do
@@ -155,8 +155,142 @@ def cmdDeriveSmoke (path : String) : IO UInt32 := do
         | .ok (.stuck m, _) => IO.eprintln s!"derive: stuck {m}"; return 1
         | .error e => IO.eprintln s!"derive: {reprStr e}"; return 1
 
+/-- Stage 7: run a wast command stream against the spec semantics. -/
+def cmdRunWast (specPath cmdsPath : String) (fuel steps : Nat) : IO UInt32 := do
+  let specIn ← IO.FS.readBinFile specPath
+  let spec ← match Sexpr.parse specIn >>= (Il.readScript · |>.mapError (⟨0, ·⟩)) with
+    | .ok s => pure s
+    | .error e => IO.eprintln s!"SPEC LOAD FAIL: {e}"; return 2
+  let env := Il.Env.ofScript spec
+  let cmdsIn ← IO.FS.readBinFile cmdsPath
+  let cmds ← match Sexpr.parse cmdsIn with
+    | .ok cs => pure cs
+    | .error e => IO.eprintln s!"CMDS PARSE FAIL: {e}"; return 2
+  let mut fresh : Il.Fresh.St := {}
+  let valHeads ← match (Il.Runner.variantHeads env fuel (.varT "val" [])).run fresh with
+    | .ok (h, st') => fresh := st'; pure h
+    | .error e => IO.eprintln s!"valHeads: {reprStr e}"; return 2
+  let store0 ← match (Il.Runner.emptyStore env fuel).run fresh with
+    | .ok (s, st') => fresh := st'; pure s
+    | .error e => IO.eprintln s!"store init: {reprStr e}"; return 2
+  let mut st : Il.Runner.St := { store := store0, modinst := none }
+  -- Wasm 3.0 script AST: (mod …) defines, (instance) instantiates the
+  -- most recent anonymous module (script.ml:60-62)
+  let mut pendingMod : Option Il.Exp := none
+  let mut counts : List (String × Nat) := []
+  let bump := fun (cs : List (String × Nat)) (k : String) =>
+    match cs.lookup k with
+    | some n => (k, n+1) :: cs.filter (·.1 != k)
+    | none => (k, 1) :: cs
+  let unq := fun (x : Sexpr) => match x with
+    | .atom t => (OcamlEscape.unquote t).toOption.getD t
+    | _ => "?"
+  let alv := fun (x : Sexpr) => Il.AlValue.ofSexpr x
+  let mut i := 0
+  for cmd in cmds do
+    let t0 ← IO.monoMsNow
+    let mut row : String × String := ("", "")
+    match cmd with
+    | .node "mod" [mv] =>
+      match alv mv with
+      | .error e => row := ("error", s!"module AL parse: {e}")
+      | .ok v =>
+        match (Il.AlDecode.decode env fuel v (.varT "module" [])).run fresh with
+        | .ok (modE, st') =>
+          fresh := st'; pendingMod := some modE
+          row := ("module", "defined")
+        | .error .fuel => row := ("fuel", "")
+        | .error e => row := ("error", reprStr e)
+    | .node "instance" [] =>
+      match pendingMod with
+      | none => row := ("error", "instance with no pending module")
+      | some modE =>
+        match (do
+            let extsE : Il.Exp := .mk (.listE []) (.iterT (.varT "externaddr" []) .list)
+            let cfg ← Il.Runner.evalCall env fuel "instantiate"
+              [st.store, modE, extsE] (.varT "config" [])
+            Il.Runner.runConfig env fuel valHeads steps cfg).run fresh with
+        | .ok (.done state _, st') =>
+          fresh := st'
+          match Il.Runner.stateParts state with
+          | some (store', frame) =>
+            match Il.Runner.structField frame "MODULE" with
+            | some mi =>
+              st := { store := store', modinst := some mi }
+              row := ("module", "instantiated")
+            | none => row := ("error", "frame has no MODULE")
+          | none => row := ("error", "state shape")
+        | .ok (.trap _, st') => fresh := st'; row := ("error", "instantiation trapped")
+        | .ok (.stuck _ m, st') => fresh := st'; row := ("stuck", m)
+        | .error .fuel => row := ("fuel", "")
+        | .error e => row := ("error", reprStr e)
+    | .node "assert_return" [.node "act" ((.atom "invoke") :: nm :: [.node "L" argXs]), .node "L" expXs] =>
+      match argXs.mapM alv, expXs.mapM alv with
+      | .ok argVs, .ok expVs =>
+        match (do
+            let (rk, _) ← Il.Runner.runInvoke env fuel steps valHeads st
+              (unq nm) argVs
+            let expected ← expVs.mapM (fun v =>
+              Il.AlDecode.decode env fuel v (.varT "val" []))
+            pure (rk, expected)).run fresh with
+        | .ok ((.done state results, expected), st') =>
+          fresh := st'
+          match Il.Runner.stateParts state with
+          | some (store', _) => st := { st with store := store' }
+          | none => pure ()
+          if results.length == expected.length
+              && (results.zip expected).all (fun (r, e) =>
+                   Il.eqExp r (Il.Runner.stripSub e)) then
+            row := ("pass", "")
+          else
+            row := ("fail", s!"expected {expected.length} vals, mismatch")
+        | .ok ((.trap _, _), st') => fresh := st'; row := ("fail", "trapped, expected return")
+        | .ok ((.stuck _ m, _), st') => fresh := st'; row := ("stuck", m)
+        | .error .fuel => row := ("fuel", "")
+        | .error e => row := ("error", reprStr e)
+      | _, _ => row := ("error", "AL parse in assert_return")
+    | .node "assert_trap" [.node "act" ((.atom "invoke") :: nm :: [.node "L" argXs]), _msg] =>
+      match argXs.mapM alv with
+      | .ok argVs =>
+        match (Il.Runner.runInvoke env fuel steps valHeads st (unq nm) argVs).run fresh with
+        | .ok ((.trap _, _), st') => fresh := st'; row := ("pass", "")
+        | .ok ((.done _ _, _), st') => fresh := st'; row := ("fail", "returned, expected trap")
+        | .ok ((.stuck _ m, _), st') => fresh := st'; row := ("stuck", m)
+        | .error .fuel => row := ("fuel", "")
+        | .error e => row := ("error", reprStr e)
+      | _ => row := ("error", "AL parse in assert_trap")
+    | .node "do" [.node "act" ((.atom "invoke") :: nm :: [.node "L" argXs])] =>
+      match argXs.mapM alv with
+      | .ok argVs =>
+        match (Il.Runner.runInvoke env fuel steps valHeads st (unq nm) argVs).run fresh with
+        | .ok ((.done state _, _), st') =>
+          fresh := st'
+          match Il.Runner.stateParts state with
+          | some (store', _) => st := { st with store := store' }
+          | none => pure ()
+          row := ("action", "")
+        | .ok (_, st') => fresh := st'; row := ("action", "non-return")
+        | .error .fuel => row := ("fuel", "")
+        | .error e => row := ("error", reprStr e)
+      | _ => row := ("error", "AL parse in do")
+    | .node "unsupported" [c, d] =>
+      row := (s!"unsupported:{unq c}", unq d)
+    | x =>
+      row := ("error", s!"unrecognized command {(Sexpr.pp 0 100000 x).2.take 60}")
+    let t1 ← IO.monoMsNow
+    IO.println s!"{i}	{row.1}	{row.2}	[{t1-t0}ms]"
+    (← IO.getStdout).flush
+    counts := bump counts row.1
+    i := i + 1
+  let total := counts.foldl (fun a p => a + p.2) 0
+  let summary := String.intercalate " " (counts.map (fun (k, n) => s!"{k}={n}"))
+  IO.println s!"SUMMARY total={total} {summary}"
+  return 0
+
 def main (args : List String) : IO UInt32 := do
   match args with
+  | ["run-wast", spec, cmds] => cmdRunWast spec cmds 1000000 10000
+  | ["run-wast", spec, cmds, f, st] => cmdRunWast spec cmds (f.toNat!) (st.toNat!)
   | ["derive-smoke", path] => cmdDeriveSmoke path
   | ["validate-trace", path, f] => cmdValidateTrace path (f.toNat!)
   | ["roundtrip-sexpr", path] => cmdRoundtripSexpr path

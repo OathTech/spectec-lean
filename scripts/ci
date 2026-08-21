@@ -132,5 +132,17 @@ probe truncated      head -c 100000
 probe non-canonical  sed 's/(nat 1)/(nat 01)/'
 note "fail-closed probes OK (3/3 rejected)"
 
+# --- 7. wast pilot differential (arc-2 stage 7, EARLY-EXIT scope) ------
+# The spec-rule runner executes a tracked pilot script end-to-end
+# (define → instantiate → invoke → assert_return) against the OCaml
+# reference-interpreter-parsed command stream; classifications must
+# match the tracked baseline exactly. Full-suite scaling was declared an
+# arc-2 early exit (see the charter Results); this pins what EXISTS.
+"$SPECTEC" deps/spectec/specification/wasm-3.0/*.spectec   --wast-sexpr baselines/wast/mini.wast -o artifacts/ci-mini.cmds   || fail "OCaml --wast-sexpr driver failed on mini.wast"
+"$BIN" run-wast artifacts/ci-dump.sexpr artifacts/ci-mini.cmds 2>/dev/null   | sed 's/\t\[[0-9]*ms\]$//' > artifacts/ci-mini.rows   || fail "run-wast failed on mini"
+diff artifacts/ci-mini.rows baselines/wast/mini.expected.tsv   || fail "wast pilot classifications drifted from baselines/wast/mini.expected.tsv"
+rm -f artifacts/ci-mini.cmds artifacts/ci-mini.rows
+note "wast pilot OK: mini.wast classifications match baseline"
+
 rm -f artifacts/ci-dump.sexpr
 echo "ci: GREEN"
