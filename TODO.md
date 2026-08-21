@@ -12,7 +12,7 @@
   shadowing as a correctness-relevant subtlety worth documenting
   upstream. Fuller write-ups for the stage-7 findings live in
   docs/findings/ ([USER 2026-08-21] directive): IterE-opt unwrapped
-  reduction, reduce_exp_call body substitution, \$allocmodule premise
+  reduction, reduce_exp_call body substitution, $allocmodule premise
   order, eta_iter_exp assert reachability.
 - [AGENT 2026-08-21] **Runner throughput (next-arc decision).** The
   rule-direct engine is correct on the pilot corpus but ~1s/Step:

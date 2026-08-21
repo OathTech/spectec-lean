@@ -401,8 +401,10 @@ def derive (env : Env) (fuel : Nat) (assumed : List Id)
         | .ok outs => .ok outs
         | .noRule => .noRule
         | .stuck m => .stuck m
+      -- epoch flush bounds memory (see callCache note)
       modify (fun st =>
-        { st with deriveCache := st.deriveCache.insert key resC })
+        let dc := if st.deriveCache.size > 100000 then {} else st.deriveCache
+        { st with deriveCache := dc.insert key resC })
       pure res
 
 def deriveCore (env : Env) (fuel : Nat) (assumed : List Id)

@@ -116,7 +116,9 @@ vprobe() { # name, transform
 vprobe undeclared-type 'sed' 's/(var "instr")/(var "instrr")/'
 vprobe undeclared-var  'sed' 's/(var "numtype")/(var "numtypee")/'
 vprobe bad-cmp-annot   'sed' '0,/(cmp eq bool/s//(cmp lt bool/'
-note "validator OK: 3 corpora green, 3/3 mutation probes rejected"
+vprobe iter-kind-flip  'sed' 's/(iter (var "val") list)/(iter (var "val") opt)/'
+vprobe num-typ-flip    'sed' '0,/(num (nat 0))/s//(num (int 0))/'
+note "validator OK: 3 corpora green, 5/5 mutation probes rejected"
 
 # --- 6. fail-closed probes ---------------------------------------------
 probe() { # name, transform (stdin->stdout)

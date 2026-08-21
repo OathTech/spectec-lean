@@ -544,7 +544,11 @@ def reduceExp (env : Env) (fuel : Nat) (e : Exp) : EvalM Exp :=
       | none => do
         -- flag=true: an empty clause list falls through to the None case
         let r ← reduceExpCall env n x args' clauses
-        modify (fun st => { st with callCache := st.callCache.insert key r })
+        -- epoch flush bounds memory (keys embed stores; an unbounded
+        -- cache measured 8+ GB RSS on nop.wast)
+        modify (fun st =>
+          let cc := if st.callCache.size > 200000 then {} else st.callCache
+          { st with callCache := cc.insert key r })
         match r with
         | none => pure (withNote (.callE x args') e)
         | some e' => pure e'
