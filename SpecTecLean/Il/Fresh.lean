@@ -30,6 +30,12 @@ structure St where
   varids : List (String × Nat) := []
   defids : List (String × Nat) := []
   gramids : List (String × Nat) := []
+  /-- Scratch flag: set by the checkPrems→CPS adapter in Rel.deriveCore
+  when a rule's premises were UNDECIDABLE (three-valued result squeezed
+  through the Option-typed split-enumeration plumbing). deriveCore
+  saves/resets/reads/restores it around each rule attempt; no other
+  reader. -/
+  premsUnknown : Bool := false
   /-- Memo table for `Eval.reduceExpCall` (PERF, semantics-preserving:
   spec functions are pure and reduction deterministic, so caching
   (defid, reduced args) → result changes cost only; `.fuel` throws

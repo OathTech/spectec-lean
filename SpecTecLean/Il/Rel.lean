@@ -236,6 +236,17 @@ def catchNonFuel (m : EvalM α) (h : Unit → EvalM α) : EvalM α :=
     | .error _ => h () st
     | r => r
 
+/-- Three-valued premise-check result (audit dim2-4/dim2-5, verified
+V3): `unknown` (undecidable) is distinct from `fail` (definitively
+false). eval.ml distinguishes them at clause level (eval.ml:527-530:
+`None` makes the WHOLE call irreducible; only `Some false` advances to
+the next clause), and else/otherwise rules require definitive failure
+of their earlier siblings. -/
+inductive PremsRes where
+  | ok (s : Subst)
+  | fail
+  | unknown
+
 /-- Split a conclusion expression into its mixop components.
 Relation conclusions are tuples of the mixop's arity (or a single
 component for arity 1). -/
@@ -263,23 +274,28 @@ pass `[] false`. -/
 def checkPrems (env : Env) (fuel : Nat) (assumed : List Id)
     (visited : List (Id × List Exp)) (s : Subst)
     (prems : List Prem) (deferred : List Prem) (prog : Bool) :
-    EvalM (Option Subst) :=
+    EvalM PremsRes :=
   match fuel with
   | 0 => throw .fuel
   | n+1 =>
     match prems with
     | [] =>
-      if deferred.isEmpty then pure (some s)
+      if deferred.isEmpty then pure (.ok s)
       else if prog then checkPrems env n assumed visited s deferred [] false
-      else pure none
+      -- exhausted deferral: the surviving premises are undecidable
+      -- (every deferred premise still carries free variables), NOT
+      -- definitively false (audit dim2-5)
+      else pure .unknown
     | prem :: rest => do
       let ok := fun (s' : Subst) =>
         checkPrems env n assumed visited s' rest deferred true
-      -- defer only when free variables remain (see hasVarPrem)
+      -- defer only when free variables remain (see hasVarPrem); a
+      -- CLOSED undecidable premise is UNKNOWN, not false (audit
+      -- dim2-5 corrected the earlier fail here)
       let defer := fun (pr : Prem) =>
         if hasVarPrem pr then
           checkPrems env n assumed visited s rest (deferred ++ [prem]) prog
-        else pure none
+        else pure .unknown
       let prem' ← liftS (Subst.substPremsOpt s [prem])
       let prem' := prem'.headD prem
       match prem' with
@@ -298,10 +314,18 @@ def checkPrems (env : Env) (fuel : Nat) (assumed : List Id)
         let ins ← (comps.take k).mapM (fun c => reduceExpRel env n assumed c)
         let dres ← derive env n assumed visited x mixop rules ins k
         match dres with
-        | .noRule => defer prem'
-        | .stuck _ => defer prem'
+        | .noRule =>
+          -- CLOSED judgment with an exhaustive no-rule search is a
+          -- definitive failure within engine semantics; with free
+          -- variables it may become derivable after later bindings
+          if hasVarPrem prem' then defer prem' else pure .fail
+        | .stuck _ =>
+          -- internal difficulty, not falsity: undecidable
+          if hasVarPrem prem' then defer prem' else pure .unknown
         | .ok outs =>
-          -- bind output patterns against derived outputs
+          -- bind output patterns against derived outputs. NOTE the
+          -- first-match/single-output limitation documented at
+          -- `derive`: a mismatch here is treated as definitive
           let r ← (outs.zip (comps.drop k)).foldlM
             (fun (acc : Option Subst) cp => do
               match acc with
@@ -311,13 +335,13 @@ def checkPrems (env : Env) (fuel : Nat) (assumed : List Id)
                   (fun _ => pure none))
             (some s)
           match r with
-          | none => pure none
+          | none => pure .fail
           | some s' => ok s'
       | .ifPr e => do
         let er ← reduceExpRel env n assumed e
         match er.it with
         | .boolE true => ok s
-        | .boolE false => pure none
+        | .boolE false => pure .fail
         | .cmpE .eq _ a b => do
           -- BINDING equation (`-- if x = pattern …`): upstream's middlend
           -- rewrites these to `let` before AL (let-intro pass); our raw
@@ -329,20 +353,28 @@ def checkPrems (env : Env) (fuel : Nat) (assumed : List Id)
           -- logged).
           let ground := fun (s' : Subst) =>
             s'.varid.entries.all (fun p => !hasVarExp p.2)
-          let r1 ← catchIrred
-            (do matchExp env n Subst.empty a b)
-            (fun _ => pure none)
+          -- track Irred: any Irred involvement makes the equation
+          -- UNDECIDABLE; a no-match WITHOUT Irred on closed, fully
+          -- reduced values is definite inequality (audit dim2-5)
+          let (r1, irr1) ← catchIrred
+            (do pure ((← matchExp env n Subst.empty a b), false))
+            (fun _ => pure (none, true))
           match r1 with
           | some s' =>
             if ground s' then ok (Subst.union s s') else defer prem'
           | none => do
-            let r2 ← catchIrred
-              (do matchExp env n Subst.empty b a)
-              (fun _ => pure none)
+            let (r2, irr2) ← catchIrred
+              (do pure ((← matchExp env n Subst.empty b a), false))
+              (fun _ => pure (none, true))
             match r2 with
             | some s' =>
               if ground s' then ok (Subst.union s s') else defer prem'
-            | none => defer prem'
+            | none =>
+              if !irr1 && !irr2
+                  && !hasVarExp a && !hasVarExp b
+                  && isNormalExp a && isNormalExp b then
+                pure .fail
+              else defer prem'
         | _ => defer prem'
       | .elsePr => ok s
       | .letPr _ e1 e2 => do
@@ -366,19 +398,19 @@ def checkPrems (env : Env) (fuel : Nat) (assumed : List Id)
           else do
             match ← reducePrem env n prem' with
             | .yes s' => ok (Subst.union s s')
-            | .no => pure none
+            | .no => pure .fail
             | .unknown => defer prem'
         | _ => do
           match ← reducePrem env n prem' with
           | .yes s' => ok (Subst.union s s')
-          | .no => pure none
+          | .no => pure .fail
           | .unknown => defer prem'
       | .negPr _ => do
         -- reuse Eval's premise reduction (handles Iter/Neg over the
         -- non-RulePr premise classes)
         match ← reducePrem env n prem' with
         | .yes s' => ok (Subst.union s s')
-        | .no => pure none
+        | .no => pure .fail
         | .unknown => defer prem'
 
 
@@ -422,10 +454,16 @@ def derive (env : Env) (fuel : Nat) (assumed : List Id)
         { st with deriveCache := dc.insert key resC })
       pure res
 
+/-- `sawUnknown`: an earlier rule in this scan had UNDECIDABLE premises.
+An `elsePr`-carrying (otherwise) rule may then NOT fire — otherwise
+semantics require definitive failure of the earlier siblings (audit
+dim2-5); the scan returns a visible `.stuck` instead. Rules without
+`elsePr` are justified by their own premises and may still be tried. -/
 def deriveCore (env : Env) (fuel : Nat) (assumed : List Id)
     (visited : List (Id × List Exp))
     (x : Id) (_mixop : Mixop)
-    (rules : List Rule) (ins : List Exp) (k : Nat) : EvalM DeriveRes :=
+    (rules : List Rule) (ins : List Exp) (k : Nat)
+    (sawUnknown : Bool := false) : EvalM DeriveRes :=
   match fuel with
   | 0 => throw .fuel
   | n+1 => do
@@ -451,26 +489,37 @@ def deriveCore (env : Env) (fuel : Nat) (assumed : List Id)
       if comps.length < k then
         err s!"relation {x}: conclusion arity below input count"
       else do
+        -- otherwise-rule gating (see docstring)
+        if sawUnknown && prems.any (fun pr => match pr with
+            | .elsePr => true | _ => false) then
+          pure (.stuck s!"relation {x}: undecidable earlier rule blocks otherwise-rule {_rname}")
+        else do
         let pats := comps.take k
-        -- anchor filter (see ruleAnchor): Step family only
-        let skip :=
-          if x == "Step" || x == "Step_pure" || x == "Step_read" then
-            match pats.head?, ins.head? with
-            | some p0, some c0 =>
-              match ruleAnchor p0, concreteHeads c0 with
-              | some a, some hs => !(hs.contains a)
-              | _, _ => false
-            | _, _ => false
-          else false
-        if skip then deriveCore env n assumed visited.tail x _mixop rest ins k else do
         -- match each input component (sequence-split fallback for
         -- CatE-chain patterns over concrete lists: context rules)
         -- inputs matched CPS-style: premises are the continuation, so
-        -- premise failure backtracks into other sequence splits
+        -- premise failure backtracks into other sequence splits.
+        -- checkPrems' three-valued result is squeezed through the
+        -- Option-typed enumeration via the Fresh.St.premsUnknown flag
+        -- (saved/reset around the attempt; nested derives save/restore
+        -- their own use, so the read below sees only THIS rule's
+        -- continuation outcomes)
+        let saved := (← get).premsUnknown
+        modify (fun st => { st with premsUnknown := false })
         let mi ← matchInputsK env n Subst.empty (ins.zip pats)
-          (fun s => checkPrems env n assumed visited s prems [] false)
+          (fun s => do
+            match ← checkPrems env n assumed visited s prems [] false with
+            | .ok s' => pure (some s')
+            | .fail => pure none
+            | .unknown => do
+              modify (fun st => { st with premsUnknown := true })
+              pure none)
+        let ruleUnknown := (← get).premsUnknown
+        modify (fun st => { st with premsUnknown := saved })
         match mi with
-        | none => deriveCore env n assumed visited.tail x _mixop rest ins k
+        | none =>
+          deriveCore env n assumed visited.tail x _mixop rest ins k
+            (sawUnknown || ruleUnknown)
         | some s' => do
           -- premises already checked (they are the CPS continuation)
           let outs ← (comps.drop k).mapM (fun c => do
@@ -603,21 +652,29 @@ def evalCallClauses (env : Env) (fuel : Nat) (assumed : List Id)
     match clauses with
     | [] => Eval.err s!"entry call {x}: no clause applies"
     | .mk _ _ pats body prems :: rest => do
+      -- mirror eval.ml:527-530 exactly: undecidable premises make the
+      -- WHOLE call irreducible (`None -> None`); only definitive
+      -- premise failure (`Some false`) advances to the next clause
+      -- (audit dim2-4/V3). The `.error` thrown for unknown passes
+      -- through catchIrred; execution-side callers keep the call
+      -- symbolic (rewriteCalls catchNonFuel) or surface it visibly.
       let r ← Eval.catchIrred
         (do
           match ← Eval.matchListM (fun s a b => Eval.matchArg env n s a b)
               Subst.empty args' pats with
-          | none => pure none
+          | none => pure (some none)
           | some s =>
             match ← checkPrems env n assumed [] s prems [] false with
-            | none => pure none
-            | some s' => do
-              pure (some (← Eval.reduceExp env n
-                (← Eval.liftS (Subst.substExpOpt s' body)))))
-        (fun _ => pure none)
+            | .fail => pure (some none)
+            | .unknown => pure none
+            | .ok s' => do
+              pure (some (some (← Eval.reduceExp env n
+                (← Eval.liftS (Subst.substExpOpt s' body))))))
+        (fun _ => pure (some none))
       match r with
-      | some e => pure e
-      | none => evalCallClauses env n assumed x args' rest
+      | some (some e) => pure e
+      | some none => evalCallClauses env n assumed x args' rest
+      | none => Eval.err s!"entry call {x}: undecidable premises"
 
 end
 

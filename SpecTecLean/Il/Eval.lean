@@ -906,8 +906,13 @@ def reducePrem (env : Env) (fuel : Nat) (prem : Prem) : EvalM PremRes :=
           | none => pure .unknown)
         (fun _ => pure .unknown)
     | .negPr prem1 => do
+      -- eval.ml:556-561 inverts only DECIDED truth. EXTENSION (audit
+      -- dim1-2/V9): our ifPr row can return `.yes` from a GUESSED
+      -- binding-equation witness (non-empty substitution); existence of
+      -- a solving substitution does not decide the equality, so it must
+      -- not become definite falsity of the negation.
       match ← reducePrem env n prem1 with
-      | .yes _ => pure .no
+      | .yes s' => if Subst.isEmpty s' then pure .no else pure .unknown
       | .no => pure (.yes Subst.empty)
       | .unknown => pure .unknown
     | .iterPr prem1 (.mk iter xes) => do
