@@ -124,6 +124,97 @@ re-runs `scripts/ci`. Honesty conventions briefed into every worker:
 verbatim outputs, derived tallies labeled, counts not adjectives, no
 result claimed unseen. Decision log: docs/2026-08-20_arc2-log.md.
 
-## Results
+## Results (2026-08-21, EARLY EXIT via the stage-6/7 escape hatch)
 
-(to be written at arc end)
+**Exit invoked:** "If bounded relation search cannot decide the wasm
+`Step` relation in practical time even for the slow model: park stage
+6/7 with measurements and a proposed alternative, deliver stages 1-5 as
+the arc." Delivered: stages 1-6 complete, plus a CORRECT but
+slow stage-7 pilot (runner + driver + ci differential gate). The
+full-suite DONE items (19,841-assertion classification; 20-file pass
+floor) are NOT met and are not claimed.
+
+### DONE scorecard (line by line)
+
+- ci GREEN incl. arc-1 checks: **MET** (last run 2026-08-21; includes
+  the new wast pilot step).
+- Dump losslessness + mixop-collision probe: **MET** (build-failing
+  `#guard`s in SpecTecLean/Probes.lean; sha-pinned dumps).
+- Validator 3/3 corpora + ≥5 mutation probes: **MET** (973/337/494 defs
+  validate; 5/5 probes rejected).
+- Harness classifies 19,841/19,841 across 97/97 files: **NOT MET**
+  (early exit; see measurements).
+- Pass floor (20 integer/control files): **NOT MET** (early exit).
+- Declared-unsupported enumeration: met for the DRIVER boundary
+  (named modules/instances, registration, NaN patterns, vectors,
+  module-convert failures, assert_malformed/invalid custom — each an
+  explicit `unsupported:<class>` row, counted by the harness); the
+  full-corpus per-class counts do not exist because the corpus was not
+  run.
+- Hygiene (0 partial/sorry/native_decide/heartbeat raises): **MET**
+  (ci-enforced grep).
+- Citations/divergence docs/log/results/audit ask: **MET** (this
+  section; docs/findings/; docs/2026-08-20_arc2-log.md).
+
+### What works (all through the real spec rules, no shortcuts)
+
+`baselines/wast/mini.wast` end-to-end in ~0.9 s: module define →
+`$instantiate` (allocmodule/alloctypes/allocfuncs chain incl. the
+forward-guess premise order) → export lookup → `$invoke` →
+`Step/ctxt-*`, `call_ref`, frame/label exits → assert_return PASS. This
+is now a ci-gated differential baseline. nop.wast (89 commands, ~20
+functions, table+elem): module decodes and instantiates; first asserts
+pass.
+
+### Measurements (the exit evidence)
+
+- Steady-state `Step` derivation: ~1 s/step (26k reduceExp entries per
+  step measured); first Step after instantiation ~27 s (cold caches).
+- nop.wast instantiation: 218 s under the (incorrect) pre-deferral
+  engine; >9 min with the correct ground-binding worklist; the full-file
+  run did not complete in interactive time (left running; results in
+  artifacts/nop.rows when done).
+- Unbounded memo caches reached 8+ GB RSS on nop.wast (now epoch-flushed
+  at fixed sizes).
+- Extrapolation: 19,841 assertions × (seconds-to-minutes each) plus 97
+  instantiations at minutes-to-hours each ≈ multi-day-to-week compute —
+  not practical for a gate, and 2-3 orders of magnitude off.
+
+Speedups already implemented (all semantics-preserving, in-code
+citations): reduceExpCall memo (~50x), derive memo (kills the
+exponential no-rule confirmation of split enumeration; LFP soundness
+argument at the definition), Step-family anchor pruning, values-first
+terminal shortcut, eqExp ptrEq short-circuit, CPS premise-aware
+backtracking. The residual bottleneck is O(|store|) term traversal per
+reduction/matching step — INHERENT to store-in-term rewriting over a
+structurally-compared AST.
+
+### Proposed alternatives (next-arc decision, recorded in TODO.md)
+
+(a) hash-consed IL AST (O(1) eq/hash → real memoization; a pointer-memo
+prototype benchmarked 20x in isolation but regressed in vivo — lead
+logged, not claimed); (b) upstream-AL-style store indirection
+(addresses + threaded store), trading against this arc's
+execute-the-rules-directly fidelity bet; (c) the il2al/AL port (already
+its own staging-plan item) with the rule-direct engine retained as the
+semantic reference for the compiled path (the [USER] backlogged
+compiled-vs-slow theorem).
+
+### Findings shipped
+
+docs/findings/: IterE-opt unwrapped reduction (eval.ml:314-321),
+reduce_exp_call body substitution (eval.ml:531), $allocmodule
+non-executable premise order (spec 4.4:103-143), eta_iter_exp assert
+reachability. Plus the earlier candidates listed in TODO.md.
+
+### Audit ask (unconditional)
+
+This arc end requests the standard adversarial audit before any merge:
+primary dimension OCaml↔Lean correspondence (mirror doctrine) over the
+stage-7 engine additions — the engine-level rules (binding-eq
+orientation + ground gate, worklist deferral, Steps closure, CPS input
+matching, anchor pruning, derive/call memo soundness arguments) are
+exactly where undocumented divergence risk concentrates; secondary
+dimensions: gate integrity (ci step 7), record honesty (this section vs
+the log), and the findings' accuracy against upstream sources. Merge and
+sign-off are the user's.
