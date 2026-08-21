@@ -1,5 +1,5 @@
 # wast differential baseline — 20029 assertions / 97 files, all explicitly classified (see scripts/wast-rollup)
-# grand totals: error=11342 timeout=4822 unsupported:assert_return-pattern=1968 unsupported:assert_malformed=1039 unsupported:assert_invalid=510 pass=169 stuck=66 unsupported:assert_unlinkable=37 resource=27 unsupported:assert_trap-action=20 fail=18 unsupported:assert_exhaustion=11
+# grand totals: error=11346 timeout=4802 unsupported:assert_return-pattern=1968 unsupported:assert_malformed=1039 unsupported:assert_invalid=510 pass=184 stuck=67 unsupported:assert_unlinkable=37 resource=27 unsupported:assert_trap-action=20 fail=18 unsupported:assert_exhaustion=11
 address	timeout	256
 align	error	48
 align	unsupported:assert_invalid	44
@@ -10,8 +10,8 @@ binary-leb128	timeout	58
 block	timeout	222
 br	timeout	96
 br_if	timeout	118
-br_on_non_null	stuck	3
-br_on_non_null	timeout	6
+br_on_non_null	stuck	4
+br_on_non_null	timeout	5
 br_on_null	error	2
 br_on_null	stuck	4
 br_on_null	unsupported:assert_invalid	1
@@ -22,8 +22,8 @@ call_ref	error	23
 call_ref	stuck	4
 call_ref	unsupported:assert_invalid	4
 comments	stuck	3
-const	pass	137
-const	timeout	163
+const	pass	152
+const	timeout	148
 const	unsupported:assert_malformed	76
 conversions	error	585
 conversions	unsupported:assert_invalid	25
@@ -54,8 +54,8 @@ f64_cmp	error	2400
 f64_cmp	unsupported:assert_invalid	6
 fac	error	6
 fac	unsupported:assert_exhaustion	1
-float_exprs	error	341
-float_exprs	timeout	423
+float_exprs	error	345
+float_exprs	timeout	419
 float_exprs	unsupported:assert_return-pattern	55
 float_literals	stuck	1
 float_literals	timeout	176

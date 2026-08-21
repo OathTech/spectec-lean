@@ -531,6 +531,19 @@ def reduceExp (env : Env) (fuel : Nat) (e : Exp) : EvalM Exp :=
       pure (withNote (.tupE (← es.mapM (reduceExp env n))) e)
     | .callE x args => do
       let args' ← args.mapM (reduceArg env n)
+      -- OPEN-ARG GUARD (engine-level, logged): under the ground-solution
+      -- policy a call result containing free variables is never
+      -- accepted (binding-eqs defer instead), so evaluating open-arg
+      -- calls is pure waste — and the symbolic attempts blow up
+      -- (measured 53 GB on $allocfuncs with a free moduleinst). Keep
+      -- the call symbolic; the worklist retries it once its arguments
+      -- are ground. Any lost inline-then-match case surfaces as a
+      -- visible stuck/unmatched row against the pinned baseline.
+      if args'.any (fun a => match a with
+          | .expA e1 => hasVarExp e1
+          | _ => false) then
+        pure (withNote (.callE x args') e)
+      else do
       let (_, _, clauses) ← match env.findDef? x with
         | some d => pure d
         | none => err s!"undeclared definition `{x}`"

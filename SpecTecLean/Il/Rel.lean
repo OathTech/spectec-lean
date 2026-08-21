@@ -570,6 +570,12 @@ def evalCallRelA (env : Env) (fuel : Nat) (assumed : List Id)
       | some d => pure d
       | none => Eval.err s!"undeclared definition {x}"
     let args' ← args.mapM (Eval.reduceArg env n)
+    -- open-arg guard (see Eval.reduceExp CallE row)
+    if args'.any (fun a => match a with
+        | .expA e1 => Eval.hasVarExp e1
+        | _ => false) then
+      Eval.err s!"entry call {x}: open arguments"
+    else
     let _ := retT
     evalCallClauses env n assumed x args' clauses
 
