@@ -46,6 +46,14 @@ structure Env where
   defs : SMap DefDef := {}
   rels : SMap RelDef := {}
   grams : SMap GramDef := {}
+  /-- EXECUTION-ONLY engine mode (no env.ml counterpart, documented
+  divergence): when true, `reduceExp` keeps calls with open arguments
+  symbolic — under the runner's ground-solution policy their results
+  are never accepted, and evaluating them symbolically blew up
+  (measured 53 GB, arc-2 log). MUST stay false for validation and any
+  eval.ml-mirroring use: eval.ml DOES reduce open-arg calls, and
+  valid.ml depends on it (ci caught exactly this, arc-2 stage 7g'). -/
+  guardOpenCalls : Bool := false
 deriving Inhabited
 
 namespace Env

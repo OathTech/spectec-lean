@@ -161,7 +161,8 @@ def cmdRunWast (specPath cmdsPath : String) (fuel steps : Nat) : IO UInt32 := do
   let spec ← match Sexpr.parse specIn >>= (Il.readScript · |>.mapError (⟨0, ·⟩)) with
     | .ok s => pure s
     | .error e => IO.eprintln s!"SPEC LOAD FAIL: {e}"; return 2
-  let env := Il.Env.ofScript spec
+  -- execution-only engine mode (see Env.guardOpenCalls doc)
+  let env := { Il.Env.ofScript spec with guardOpenCalls := true }
   let cmdsIn ← IO.FS.readBinFile cmdsPath
   let cmds ← match Sexpr.parse cmdsIn with
     | .ok cs => pure cs

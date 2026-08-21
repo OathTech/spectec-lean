@@ -539,7 +539,7 @@ def reduceExp (env : Env) (fuel : Nat) (e : Exp) : EvalM Exp :=
       -- the call symbolic; the worklist retries it once its arguments
       -- are ground. Any lost inline-then-match case surfaces as a
       -- visible stuck/unmatched row against the pinned baseline.
-      if args'.any (fun a => match a with
+      if env.guardOpenCalls && args'.any (fun a => match a with
           | .expA e1 => hasVarExp e1
           | _ => false) then
         pure (withNote (.callE x args') e)
