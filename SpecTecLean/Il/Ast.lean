@@ -55,18 +55,18 @@ structure Region where
   c1 : Int
   l2 : Int
   c2 : Int
-deriving Repr, BEq, Inhabited
+deriving Repr, BEq, Inhabited, Hashable
 
 /-- xl/num.ml:14 `typ = [`NatT | `IntT | `RatT | `RealT]`. -/
 inductive NumTyp where
   | nat | int | rat | real
-deriving Repr, BEq, Inhabited
+deriving Repr, BEq, Inhabited, Hashable
 
 /-- ast.ml:26 `optyp = [Bool.typ | Num.typ]` (xl/bool.ml:1 `[`BoolT]`). -/
 inductive OpTyp where
   | bool
   | num (nt : NumTyp)
-deriving Repr, BEq, Inhabited
+deriving Repr, BEq, Inhabited, Hashable
 
 /-- xl/num.ml:6-12 `num`. `rat` is zarith `Q.t` as printed `num/den`
 (print.ml:19; reader enforces Q.t canonicity); `real` is the raw `%.17g`
@@ -76,7 +76,7 @@ inductive Num where
   | int (i : Int)
   | rat (num den : Int)
   | real (raw : String)
-deriving Repr, BEq, Inhabited
+deriving Repr, BEq, Inhabited, Hashable
 
 /-- ast.ml:49 `unop = [Bool.unop | Num.unop]`
 (xl/bool.ml:3 `[`NotOp]`, xl/num.ml:16 `[`PlusOp | `MinusOp]`).
@@ -84,18 +84,18 @@ print.ml:25-30 also matches `PlusMinusOp`/`MinusPlusOp`, unreachable from
 this type (open polymorphic variants) — not mirrored. -/
 inductive UnOp where
   | not | plus | minus
-deriving Repr, BEq, Inhabited
+deriving Repr, BEq, Inhabited, Hashable
 
 /-- ast.ml:50 `binop` (xl/bool.ml:4, xl/num.ml:17). -/
 inductive BinOp where
   | and | or | impl | equiv
   | add | sub | mul | div | mod | pow
-deriving Repr, BEq, Inhabited
+deriving Repr, BEq, Inhabited, Hashable
 
 /-- ast.ml:51 `cmpop` (xl/bool.ml:5, xl/num.ml:18). -/
 inductive CmpOp where
   | eq | ne | lt | gt | le | ge
-deriving Repr, BEq, Inhabited
+deriving Repr, BEq, Inhabited, Hashable
 
 mutual
 
@@ -239,6 +239,8 @@ end
 deriving instance Repr for Iter, Typ, TypBind, DefTyp, TypField, TypCase,
   Exp, Exp', ExpField, Path, Path', IterExp, Dom, Sym, Arg, Param, Prem
 deriving instance BEq for Iter, Typ, TypBind, DefTyp, TypField, TypCase,
+  Exp, Exp', ExpField, Path, Path', IterExp, Dom, Sym, Arg, Param, Prem
+deriving instance Hashable for Iter, Typ, TypBind, DefTyp, TypField, TypCase,
   Exp, Exp', ExpField, Path, Path', IterExp, Dom, Sym, Arg, Param, Prem
 
 instance : Inhabited Exp := ⟨.mk (.boolE false) .boolT⟩

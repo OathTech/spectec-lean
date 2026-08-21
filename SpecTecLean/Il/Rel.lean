@@ -1,4 +1,5 @@
 import SpecTecLean.Il.Eval
+import SpecTecLean.Il.ToSexpr
 /-!
 Relation execution: bounded, deterministic derivability search for `RelD`
 rules (arc-2 stage 6). This layer has NO OCaml IL-level counterpart —
@@ -45,21 +46,60 @@ def isVarIter : Exp → Bool
   | .mk (.iterE _ (.mk _ _)) _ => true
   | _ => false
 
+/-- Head atom of a case expression (through SubE), e.g. "CONST". -/
+def headAtom : Exp → Option String
+  | .mk (.subE e _ _) _ => headAtom e
+  | .mk (.caseE op _) _ =>
+    ((MixopEq.flatten op).flatMap id).head?.map XlPrint.atomToString
+  | _ => none
+
+/-- The instruction-chain part of a Step-family conclusion input: either
+a config case `(state ; instrs)` or a bare chain. -/
+def ruleAnchorChain (p : Exp) : Exp :=
+  match p.it with
+  | .caseE _ (.mk (.tupE [_, instrs]) _) => instrs
+  | _ => p
+
+/-- PERF filter (semantics-preserving pruning): the LAST fixed
+(non-iteration) component of a rule's conclusion instruction chain names
+the operative instruction atom; a concrete instruction list lacking that
+atom cannot match (every fixed component must consume a top-level
+element whose head it must equal). Rules without a determinable anchor
+are never skipped. -/
+def ruleAnchor (p : Exp) : Option String :=
+  let fixed := (catChain (ruleAnchorChain p)).filter (fun c => !isVarIter c)
+  match fixed.getLast? with
+  | some c => headAtom c
+  | none => none
+
+/-- Top-level head atoms of a concrete config's instruction list
+(`none` when the shape is not a reduced list — then no rule is skipped). -/
+def concreteHeads (cin : Exp) : Option (List String) :=
+  match (ruleAnchorChain cin).it with
+  | .listE es => some (es.filterMap headAtom)
+  | _ => none
+
 mutual
 
-/-- Try to match a list of pattern components against a concrete element
-list, enumerating boundaries for variable-iteration components
-(shortest-first). Returns the extended substitution. -/
-def matchSeq (env : Env) (fuel : Nat) (s : Subst) (pats : List Exp)
-    (elems : List Exp) (elemTyp : Typ) (k : Nat) : EvalM (Option Subst) :=
+/-- CPS sequence matcher: match pattern components against a concrete
+element list, enumerating boundaries for variable-iteration components
+(shortest-first), and accept the FIRST enumeration for which the
+continuation `k` (the rest of the rule: remaining inputs + premises)
+succeeds. Premise-aware backtracking: a split that matches locally but
+fails the continuation is not committed. -/
+def matchSeqK (env : Env) (fuel : Nat) (s : Subst) (pats : List Exp)
+    (elems : List Exp) (elemTyp : Typ)
+    (k : Subst → EvalM (Option Subst)) : EvalM (Option Subst) :=
   match fuel with
   | 0 => throw .fuel
   | n+1 =>
     match pats with
-    | [] => if elems.isEmpty then pure (some s) else pure none
-    | [p] =>
+    | [] => if elems.isEmpty then k s else pure none
+    | [p] => do
       -- last component absorbs the rest
-      matchComponent env n s p elems elemTyp
+      match ← matchComponent env n s p elems elemTyp with
+      | none => pure none
+      | some s' => k s'
     | p :: ps =>
       if isVarIter p then
         -- enumerate the split point, shortest prefix first
@@ -70,7 +110,7 @@ def matchSeq (env : Env) (fuel : Nat) (s : Subst) (pats : List Exp)
             (do
               match ← matchComponent env n s p pre elemTyp with
               | none => pure none
-              | some s' => matchSeq env n s' ps post elemTyp k)
+              | some s' => matchSeqK env n s' ps post elemTyp k)
             (fun _ => pure none))
       else do
         -- fixed-arity component: consumes exactly one element
@@ -82,7 +122,7 @@ def matchSeq (env : Env) (fuel : Nat) (s : Subst) (pats : List Exp)
             (fun _ => pure none)
           match r with
           | none => pure none
-          | some s' => matchSeq env n s' ps rest elemTyp k
+          | some s' => matchSeqK env n s' ps rest elemTyp k
 
 /-- Match one pattern component against a concrete SUBLIST (as a ListE). -/
 def matchComponent (env : Env) (fuel : Nat) (s : Subst) (p : Exp)
@@ -93,6 +133,55 @@ def matchComponent (env : Env) (fuel : Nat) (s : Subst) (p : Exp)
     let concrete : Exp := .mk (.listE elems) (.iterT elemTyp .list)
     catchIrred (matchExp' env n s concrete p) (fun _ => pure none)
 
+/-- CPS input-component matcher: plain `matchExp'` first; on
+Irred/no-match, decompose case/tup wrappers pairwise and sequence-split
+where a concrete list meets a `CatE`-chain pattern (context rules nest
+the chain INSIDE the config case — Step/ctxt-instrs). Engine-level rule
+for DERIVATION INPUTS only (logged); enumeration alternatives exist only
+on the decomposition path — a direct matchExp' success is committed. -/
+def matchInputK (env : Env) (fuel : Nat) (s : Subst) (concrete pat : Exp)
+    (k : Subst → EvalM (Option Subst)) : EvalM (Option Subst) :=
+  match fuel with
+  | 0 => throw .fuel
+  | n+1 => do
+    let r ← catchIrred (matchExp' env n s concrete pat) (fun _ => pure none)
+    match r with
+    | some s' => k s'
+    | none => matchInputDecompK env n s concrete pat k
+
+def matchInputDecompK (env : Env) (fuel : Nat) (s : Subst)
+    (concrete pat : Exp) (k : Subst → EvalM (Option Subst)) :
+    EvalM (Option Subst) :=
+  match fuel with
+  | 0 => throw .fuel
+  | n+1 =>
+    match concrete.it, pat.it with
+    | .caseE op1 p1, .caseE op2 p2 =>
+      if eqMixop op1 op2 then matchInputK env n s p1 p2 k else pure none
+    | .tupE es1, .tupE es2 =>
+      if es1.length == es2.length then
+        matchInputsK env n s (es1.zip es2) k
+      else pure none
+    | .listE elems, .catE _ _ =>
+      let elemTyp := match concrete.note with
+        | .iterT t _ => t
+        | t => t
+      matchSeqK env n s (catChain pat) elems elemTyp k
+    | _, _ => pure none
+
+/-- Fold `matchInputK` over (concrete, pattern) pairs, CPS. -/
+def matchInputsK (env : Env) (fuel : Nat) (s : Subst)
+    (prs : List (Exp × Exp)) (k : Subst → EvalM (Option Subst)) :
+    EvalM (Option Subst) :=
+  match fuel with
+  | 0 => throw .fuel
+  | n+1 =>
+    match prs with
+    | [] => k s
+    | cp :: rest =>
+      matchInputK env n s cp.1 cp.2 (fun s' =>
+        matchInputsK env n s' rest k)
+
 end
 
 /-- Input arity convention per relation: components before the arrow are
@@ -102,6 +191,10 @@ def inputArity (x : Id) (comps : List Exp) : EvalM Nat :=
   if x == "Step" || x == "Step_pure" || x == "Step_read" || x == "Steps"
   then pure 1
   else if x == "Eval_expr" then pure 2
+  else if x == "Module_ok" then pure 1
+  -- Expand: deftype ~~ comptype (2.4-syntax.types.spectec) — functional
+  -- unrolling, deftype in, comptype out
+  else if x == "Expand" then pure 1
   else if comps.length == 1 then pure 1  -- pure judgment: check only
   else Eval.err s!"relation {x}: no input-arity convention registered (extend Rel.inputArity)"
 
@@ -118,6 +211,16 @@ inductive DeriveRes where
   | stuck (msg : String)
 deriving Inhabited
 
+/-- Catch every error except `.fuel`, which must stay loud. Used only
+around engine-level fallback attempts (rewriteCalls) where failure means
+"stays symbolic → visible stuck downstream", never a silent wrong answer. -/
+def catchNonFuel (m : EvalM α) (h : Unit → EvalM α) : EvalM α :=
+  fun st =>
+    match m st with
+    | .error .fuel => .error .fuel
+    | .error _ => h () st
+    | r => r
+
 /-- Split a conclusion expression into its mixop components.
 Relation conclusions are tuples of the mixop's arity (or a single
 component for arity 1). -/
@@ -128,21 +231,48 @@ def components (e : Exp) : List Exp :=
 
 mutual
 
-/-- Check premises under `s`, in order; RulePr recurses into `derive`.
-Mirrors the reducePrems threading (union of accumulated substs). -/
-def checkPrems (env : Env) (fuel : Nat) (s : Subst) :
-    List Prem → EvalM (Option Subst) :=
-  fun prems =>
+/-- Check premises under `s`; RulePr recurses into `derive`.
+Mirrors the reducePrems threading (union of accumulated substs).
+`visited` is the derivation-cycle guard (see `derive`).
+
+WORKLIST DEFERRAL (engine-level, logged): the spec writes premise
+conjunctions in non-executable order — $allocmodule's "forward guess"
+(4.4-execution.modules.spectec:121-133) passes `moduleinst` to
+$allocfuncs premises BEFORE the premise that defines it; upstream's
+il2al animation pass reorders premises for executability. Here an
+undecidable premise is DEFERRED and retried after later premises extend
+the substitution; rounds continue while progress is made. Equation order
+within a conjunction is semantically free, so this changes evaluation
+order only. `deferred`/`prog` are the worklist state; external callers
+pass `[] false`. -/
+def checkPrems (env : Env) (fuel : Nat) (assumed : List Id)
+    (visited : List (Id × List Exp)) (s : Subst)
+    (prems : List Prem) (deferred : List Prem) (prog : Bool) :
+    EvalM (Option Subst) :=
   match fuel with
   | 0 => throw .fuel
   | n+1 =>
     match prems with
-    | [] => pure (some s)
+    | [] =>
+      if deferred.isEmpty then pure (some s)
+      else if prog then checkPrems env n assumed visited s deferred [] false
+      else pure none
     | prem :: rest => do
+      let ok := fun (s' : Subst) =>
+        checkPrems env n assumed visited s' rest deferred true
+      -- defer only when free variables remain (see hasVarPrem)
+      let defer := fun (pr : Prem) =>
+        if hasVarPrem pr then
+          checkPrems env n assumed visited s rest (deferred ++ [prem]) prog
+        else pure none
       let prem' ← liftS (Subst.substPremsOpt s [prem])
       let prem' := prem'.headD prem
       match prem' with
       | .rulePr x _args _op e => do
+        -- HARNESS BOUNDARY: assumed validation relations (see
+        -- evalCallRel doc + arc log) — satisfied without output binding;
+        -- unbound outputs surface as visible stuck, never wrong answers
+        if assumed.contains x then ok s else do
         -- premise components: bound prefix = inputs, unbound suffix = outs
         let comps := components e
         let (ps, mixop, _t, rules) ← match env.findRel? x with
@@ -150,8 +280,11 @@ def checkPrems (env : Env) (fuel : Nat) (s : Subst) :
           | none => err s!"undeclared relation {x}"
         let _ := ps
         let k ← inputArity x comps
-        let ins ← (comps.take k).mapM (fun c => reduceExp env n c)
-        match ← derive env n x mixop rules ins k with
+        let ins ← (comps.take k).mapM (fun c => reduceExpRel env n assumed c)
+        let dres ← derive env n assumed visited x mixop rules ins k
+        match dres with
+        | .noRule => defer prem'
+        | .stuck _ => defer prem'
         | .ok outs =>
           -- bind output patterns against derived outputs
           let r ← (outs.zip (comps.drop k)).foldlM
@@ -164,14 +297,39 @@ def checkPrems (env : Env) (fuel : Nat) (s : Subst) :
             (some s)
           match r with
           | none => pure none
-          | some s' => checkPrems env n s' rest
-        | _ => pure none
+          | some s' => ok s'
       | .ifPr e => do
-        match (← reduceExp env n e).it with
-        | .boolE true => checkPrems env n s rest
+        let er ← reduceExpRel env n assumed e
+        match er.it with
+        | .boolE true => ok s
         | .boolE false => pure none
-        | _ => pure none  -- undecidable premise: rule does not apply
-      | .elsePr => checkPrems env n s rest
+        | .cmpE .eq _ a b => do
+          -- BINDING equation (`-- if x = pattern …`): upstream's middlend
+          -- rewrites these to `let` before AL (let-intro pass); our raw
+          -- IL keeps them, so an undecidable equality is executed as a
+          -- pattern match, either orientation. A match whose bindings
+          -- still contain FREE VARIABLES is not a ground solution — it
+          -- must wait for the premises that define those variables
+          -- ($allocmodule's forward guess): defer it (engine-level rule,
+          -- logged).
+          let ground := fun (s' : Subst) =>
+            s'.varid.entries.all (fun p => !hasVarExp p.2)
+          let r1 ← catchIrred
+            (do matchExp env n Subst.empty a b)
+            (fun _ => pure none)
+          match r1 with
+          | some s' =>
+            if ground s' then ok (Subst.union s s') else defer prem'
+          | none => do
+            let r2 ← catchIrred
+              (do matchExp env n Subst.empty b a)
+              (fun _ => pure none)
+            match r2 with
+            | some s' =>
+              if ground s' then ok (Subst.union s s') else defer prem'
+            | none => defer prem'
+        | _ => defer prem'
+      | .elsePr => ok s
       | .letPr _ e1 e2 => do
         let r ← catchIrred
           (do
@@ -180,25 +338,95 @@ def checkPrems (env : Env) (fuel : Nat) (s : Subst) :
             | none => pure none)
           (fun _ => pure none)
         match r with
-        | none => pure none
-        | some s' => checkPrems env n (Subst.union s s') rest
-      | .iterPr _ _ | .negPr _ => do
+        | none => defer prem'
+        | some s' => ok (Subst.union s s')
+      | .iterPr inner _ => do
+        -- iterated assumed-relation premises are likewise satisfied
+        let rec innermost : Prem → Prem
+          | .iterPr p _ => innermost p
+          | p => p
+        match innermost inner with
+        | .rulePr x _ _ _ =>
+          if assumed.contains x then ok s
+          else do
+            match ← reducePrem env n prem' with
+            | .yes s' => ok (Subst.union s s')
+            | .no => pure none
+            | .unknown => defer prem'
+        | _ => do
+          match ← reducePrem env n prem' with
+          | .yes s' => ok (Subst.union s s')
+          | .no => pure none
+          | .unknown => defer prem'
+      | .negPr _ => do
         -- reuse Eval's premise reduction (handles Iter/Neg over the
         -- non-RulePr premise classes)
         match ← reducePrem env n prem' with
-        | .yes s' => checkPrems env n (Subst.union s s') rest
+        | .yes s' => ok (Subst.union s s')
         | .no => pure none
-        | .unknown => pure none
+        | .unknown => defer prem'
 
 
 
 /-- Derive one step of relation `x` with `k` ground inputs. Rules tried
-in spec order; sequence-split fallback for CatE-chain conclusions. -/
-def derive (env : Env) (fuel : Nat) (x : Id) (_mixop : Mixop)
+in spec order; sequence-split fallback for CatE-chain conclusions.
+`visited` refuses a sub-derivation of the IDENTICAL judgment (relation +
+inputs): least-fixed-point derivability admits no such cycle, so refusal
+is semantically exact — and it is what makes context rules like
+Step/ctxt-instrs (whose Step premise precedes the ≠eps guard) terminate
+on empty sequences. -/
+def derive (env : Env) (fuel : Nat) (assumed : List Id)
+    (visited : List (Id × List Exp))
+    (x : Id) (_mixop : Mixop)
     (rules : List Rule) (ins : List Exp) (k : Nat) : EvalM DeriveRes :=
   match fuel with
   | 0 => throw .fuel
-  | n+1 =>
+  | n+1 => do
+    -- memoized (Fresh.St.deriveCache; soundness argued there). The
+    -- cycle-guard check must PRECEDE the cache lookup: a refusal is
+    -- path-local and must not be cached.
+    let key := (x, ins)
+    if visited.any (fun (y, ys) =>
+        y == x && ys.length == ins.length
+          && (ys.zip ins).all (fun (a, b) => eqExp a b)) then
+      pure .noRule
+    else
+    match (← get).deriveCache.get? key with
+    | some (.ok outs) => pure (.ok outs)
+    | some .noRule => pure .noRule
+    | some (.stuck m) => pure (.stuck m)
+    | none => do
+      let res ← deriveCore env n assumed visited x _mixop rules ins k
+      let resC : Fresh.DeriveResC := match res with
+        | .ok outs => .ok outs
+        | .noRule => .noRule
+        | .stuck m => .stuck m
+      modify (fun st =>
+        { st with deriveCache := st.deriveCache.insert key resC })
+      pure res
+
+def deriveCore (env : Env) (fuel : Nat) (assumed : List Id)
+    (visited : List (Id × List Exp))
+    (x : Id) (_mixop : Mixop)
+    (rules : List Rule) (ins : List Exp) (k : Nat) : EvalM DeriveRes :=
+  match fuel with
+  | 0 => throw .fuel
+  | n+1 => do
+    if visited.any (fun (y, ys) =>
+        y == x && ys.length == ins.length
+          && (ys.zip ins).all (fun (a, b) => eqExp a b)) then
+      pure .noRule
+    else if x == "Steps" then
+      -- CLOSURE convention (engine-level, logged): Steps is the
+      -- reflexive-transitive closure of Step (steps-refl/steps-trans,
+      -- 4.3-execution.instructions.spectec); generic first-match search
+      -- would stop at the reflexive rule. Step is deterministic, so the
+      -- maximal chain is canonical: iterate Step to exhaustion.
+      match ins with
+      | [cfg] => stepsClosure env n assumed visited cfg
+      | _ => err "Steps: expected a single config input"
+    else
+    let visited := (x, ins) :: visited
     match rules with
     | [] => pure .noRule
     | .mk _rname _ _qs _op concl prems :: rest => do
@@ -207,34 +435,173 @@ def derive (env : Env) (fuel : Nat) (x : Id) (_mixop : Mixop)
         err s!"relation {x}: conclusion arity below input count"
       else do
         let pats := comps.take k
+        -- anchor filter (see ruleAnchor): Step family only
+        let skip :=
+          if x == "Step" || x == "Step_pure" || x == "Step_read" then
+            match pats.head?, ins.head? with
+            | some p0, some c0 =>
+              match ruleAnchor p0, concreteHeads c0 with
+              | some a, some hs => !(hs.contains a)
+              | _, _ => false
+            | _, _ => false
+          else false
+        if skip then deriveCore env n assumed visited.tail x _mixop rest ins k else do
         -- match each input component (sequence-split fallback for
         -- CatE-chain patterns over concrete lists: context rules)
-        let mi ← (ins.zip pats).foldlM
-          (fun (acc : Option Subst) cp => do
-            match acc with
-            | none => pure none
-            | some sA =>
-              catchIrred (matchExp' env n sA cp.1 cp.2)
-                (fun _ => do
-                  match cp.1.it, cp.2.it with
-                  | .listE elems, .catE _ _ => do
-                    let elemTyp := match cp.1.note with
-                      | .iterT t _ => t
-                      | t => t
-                    matchSeq env n sA (catChain cp.2) elems elemTyp k
-                  | _, _ => pure none))
-          (some Subst.empty)
+        -- inputs matched CPS-style: premises are the continuation, so
+        -- premise failure backtracks into other sequence splits
+        let mi ← matchInputsK env n Subst.empty (ins.zip pats)
+          (fun s => checkPrems env n assumed visited s prems [] false)
         match mi with
-        | none => derive env n x _mixop rest ins k
-        | some s => do
-          match ← checkPrems env n s prems with
-          | none => derive env n x _mixop rest ins k
-          | some s' => do
-            let outs ← (comps.drop k).mapM (fun c => do
-              reduceExp env n (← liftS (Subst.substExpOpt s' c)))
-            pure (.ok outs)
+        | none => deriveCore env n assumed visited.tail x _mixop rest ins k
+        | some s' => do
+          -- premises already checked (they are the CPS continuation)
+          let outs ← (comps.drop k).mapM (fun c => do
+            reduceExpRel env n assumed (← liftS (Subst.substExpOpt s' c)))
+          pure (.ok outs)
+
+/-- Iterate `Step` from a configuration to exhaustion (see the Steps
+closure convention in `derive`). -/
+def stepsClosure (env : Env) (fuel : Nat) (assumed : List Id)
+    (visited : List (Id × List Exp)) (cfg : Exp) : EvalM DeriveRes :=
+  match fuel with
+  | 0 => throw .fuel
+  | n+1 => do
+    let (_, mixop, _, rules) ← match env.findRel? "Step" with
+      | some d => pure d
+      | none => err "relation Step not found"
+    match ← derive env n assumed visited "Step" mixop rules [cfg] 1 with
+    | .ok [cfg'] => stepsClosure env n assumed visited cfg'
+    | .ok _ => err "Step produced unexpected arity"
+    | .noRule => pure (.ok [cfg])
+    | .stuck m => pure (.stuck m)
+
+/-- Reduce, then evaluate residual rel-premised calls, then re-reduce
+(the surrounding structure — `proj`, `cat`, … — over freshly produced
+values). -/
+def reduceExpRel (env : Env) (fuel : Nat) (assumed : List Id) (e : Exp) :
+    EvalM Exp :=
+  match fuel with
+  | 0 => throw .fuel
+  | n+1 => do
+    let e1 ← reduceExp env n e
+    let e2 ← rewriteCalls env n assumed e1
+    reduceExp env n e2
+
+/-- Innermost-first: evaluate residual `CallE` nodes via the rule engine.
+Functions whose clauses carry RELATION premises ($evalglobals,
+$evalexprs, …) are opaque to Eval.reduceExpCall (mirrors eval.ml:543
+reduce_prem RulePr → unknown); this rewrites them with evalCallRelA. A
+call that still fails stays symbolic (visible stuck downstream). -/
+def rewriteCalls (env : Env) (fuel : Nat) (assumed : List Id) (e : Exp) :
+    EvalM Exp :=
+  match fuel with
+  | 0 => throw .fuel
+  | n+1 => do
+    match e with
+    | .mk it note => do
+      let it' ← rewriteCalls' env n assumed it
+      match it' with
+      | .callE x args =>
+        catchNonFuel
+          (do
+            let r ← evalCallRelA env n assumed x args note
+            -- the produced body may expose further rel-calls
+            rewriteCalls env n assumed r)
+          (fun _ => pure (Exp.mk it' note))
+      | _ => pure (Exp.mk it' note)
+
+def rewriteCalls' (env : Env) (fuel : Nat) (assumed : List Id) :
+    Exp' → EvalM Exp' :=
+  fun it =>
+  match fuel with
+  | 0 => throw .fuel
+  | n+1 =>
+    let rw := rewriteCalls env n assumed
+    match it with
+    | .varE _ | .boolE _ | .numE _ | .textE _ => pure it
+    | .unE op t e1 => do pure (.unE op t (← rw e1))
+    | .binE op t e1 e2 => do pure (.binE op t (← rw e1) (← rw e2))
+    | .cmpE op t e1 e2 => do pure (.cmpE op t (← rw e1) (← rw e2))
+    | .tupE es => do pure (.tupE (← es.mapM rw))
+    | .projE e1 i => do pure (.projE (← rw e1) i)
+    | .caseE op e1 => do pure (.caseE op (← rw e1))
+    | .uncaseE e1 op => do pure (.uncaseE (← rw e1) op)
+    | .optE none => pure it
+    | .optE (some e1) => do pure (.optE (some (← rw e1)))
+    | .theE e1 => do pure (.theE (← rw e1))
+    | .strE efs => do
+      pure (.strE (← efs.mapM (fun f => match f with
+        | .mk a e1 => do pure (ExpField.mk a (← rw e1)))))
+    | .dotE e1 a => do pure (.dotE (← rw e1) a)
+    | .compE e1 e2 => do pure (.compE (← rw e1) (← rw e2))
+    | .listE es => do pure (.listE (← es.mapM rw))
+    | .liftE e1 => do pure (.liftE (← rw e1))
+    | .memE e1 e2 => do pure (.memE (← rw e1) (← rw e2))
+    | .lenE e1 => do pure (.lenE (← rw e1))
+    | .catE e1 e2 => do pure (.catE (← rw e1) (← rw e2))
+    | .idxE e1 e2 => do pure (.idxE (← rw e1) (← rw e2))
+    | .sliceE e1 e2 e3 => do pure (.sliceE (← rw e1) (← rw e2) (← rw e3))
+    | .updE e1 p e2 => do pure (.updE (← rw e1) p (← rw e2))
+    | .extE e1 p e2 => do pure (.extE (← rw e1) p (← rw e2))
+    | .ifE e1 e2 e3 => do pure (.ifE (← rw e1) (← rw e2) (← rw e3))
+    | .callE x args => do
+      pure (.callE x (← args.mapM (fun a => match a with
+        | .expA e1 => do pure (Arg.expA (← rw e1))
+        | a => pure a)))
+    | .iterE e1 (.mk iter xes) => do
+      let xes' ← xes.mapM (fun d => match d with
+        | .mk x ex => do pure (Dom.mk x (← rw ex)))
+      pure (.iterE (← rw e1) (.mk iter xes'))
+    | .cvtE e1 nt1 nt2 => do pure (.cvtE (← rw e1) nt1 nt2)
+    | .subE e1 t1 t2 => do pure (.subE (← rw e1) t1 t2)
+
+/-- Evaluate a function call whose clause premises may include RELATION
+premises: reduceExpCall's premise handling can't derive relations; this
+mirrors it with `checkPrems`. -/
+def evalCallRelA (env : Env) (fuel : Nat) (assumed : List Id)
+    (x : Id) (args : List Arg) (retT : Typ) : EvalM Exp :=
+  match fuel with
+  | 0 => throw .fuel
+  | n+1 => do
+    let (_, _, clauses) ← match env.findDef? x with
+      | some d => pure d
+      | none => Eval.err s!"undeclared definition {x}"
+    let args' ← args.mapM (Eval.reduceArg env n)
+    let _ := retT
+    evalCallClauses env n assumed x args' clauses
+
+def evalCallClauses (env : Env) (fuel : Nat) (assumed : List Id)
+    (x : Id) (args' : List Arg) : List Clause → EvalM Exp :=
+  fun clauses =>
+  match fuel with
+  | 0 => throw .fuel
+  | n+1 =>
+    match clauses with
+    | [] => Eval.err s!"entry call {x}: no clause applies"
+    | .mk _ _ pats body prems :: rest => do
+      let r ← Eval.catchIrred
+        (do
+          match ← Eval.matchListM (fun s a b => Eval.matchArg env n s a b)
+              Subst.empty args' pats with
+          | none => pure none
+          | some s =>
+            match ← checkPrems env n assumed [] s prems [] false with
+            | none => pure none
+            | some s' => do
+              pure (some (← Eval.reduceExp env n
+                (← Eval.liftS (Subst.substExpOpt s' body)))))
+        (fun _ => pure none)
+      match r with
+      | some e => pure e
+      | none => evalCallClauses env n assumed x args' rest
 
 end
+
+/-- Entry-call form of `evalCallRelA` over plain expression arguments. -/
+def evalCallRel (env : Env) (fuel : Nat) (assumed : List Id)
+    (x : Id) (args : List Exp) (retT : Typ) : EvalM Exp :=
+  evalCallRelA env fuel assumed x (args.map .expA) retT
 
 end Rel
 

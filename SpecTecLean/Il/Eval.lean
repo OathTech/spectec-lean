@@ -4,6 +4,7 @@ import SpecTecLean.Il.Free
 import SpecTecLean.Il.Eq
 import SpecTecLean.Il.Env
 import SpecTecLean.Il.Subst
+import SpecTecLean.Il.ToSexpr
 /-!
 Type/expression reduction, matching, equivalence, subtyping — mirroring
 `deps/spectec/spectec/src/il/eval.ml` in full (spectec @ acc6e834 +
@@ -34,6 +35,7 @@ Structure of the mirror (all logged as arc-2 decisions):
 
 namespace SpecTecLean.Il
 
+open SpecTecLean (Sexpr)
 open SpecTecLean.Xl (Atom Mixop)
 
 inductive EvalErr where
@@ -131,6 +133,96 @@ def isNormalExp' : Exp' → Bool
       | (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; omega)
       | (rename_i hmem; have := List.sizeOf_lt_of_mem hmem; simp at this; omega)
 end
+
+mutual
+/-- `isNormalExp` minus `subE`: the reduce fast path must NOT skip a
+term containing subsumption wrappers — reduce is what ERASES them
+(eval.ml:430-433); treating `subE(value)` as done leaves wrappers in
+bound values and breaks matching. -/
+def isPureNormalExp (e : Exp) : Bool :=
+  match e with
+  | .mk it _ => isPureNormalExp' it
+  termination_by 2 * sizeOf e
+
+def isPureNormalExp' : Exp' → Bool
+  | .boolE _ | .numE _ | .textE _ => true
+  | .listE es => es.attach.all (fun ⟨e1, _⟩ => isPureNormalExp e1)
+  | .tupE es => es.attach.all (fun ⟨e1, _⟩ => isPureNormalExp e1)
+  | .optE none => true
+  | .optE (some e1) => isPureNormalExp e1
+  | .caseE _ e1 => isPureNormalExp e1
+  | .strE efs =>
+    efs.attach.all (fun ⟨f, _⟩ => match f with | .mk _ e1 => isPureNormalExp e1)
+  | _ => false
+  termination_by it => 2 * sizeOf it + 1
+  decreasing_by
+    all_goals simp_wf
+    all_goals first
+      | omega
+      | (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; omega)
+      | (rename_i hmem; have := List.sizeOf_lt_of_mem hmem; simp at this; omega)
+end
+
+mutual
+/-- Does the expression contain any variable occurrence? Deferral is
+useful ONLY for premises with free variables — a closed premise's
+outcome cannot change under a larger substitution. -/
+def hasVarExp (e : Exp) : Bool :=
+  match e with
+  | .mk it _ => hasVarExp' it
+  termination_by 2 * sizeOf e
+
+def hasVarExp' : Exp' → Bool
+  | .varE _ => true
+  | .boolE _ | .numE _ | .textE _ => false
+  | .unE _ _ e1 => hasVarExp e1
+  | .projE e1 _ => hasVarExp e1
+  | .caseE _ e1 => hasVarExp e1
+  | .uncaseE e1 _ => hasVarExp e1
+  | .theE e1 => hasVarExp e1
+  | .dotE e1 _ => hasVarExp e1
+  | .liftE e1 => hasVarExp e1
+  | .lenE e1 => hasVarExp e1
+  | .cvtE e1 _ _ => hasVarExp e1
+  | .subE e1 _ _ => hasVarExp e1
+  | .binE _ _ e1 e2 => hasVarExp e1 || hasVarExp e2
+  | .cmpE _ _ e1 e2 => hasVarExp e1 || hasVarExp e2
+  | .compE e1 e2 => hasVarExp e1 || hasVarExp e2
+  | .memE e1 e2 => hasVarExp e1 || hasVarExp e2
+  | .catE e1 e2 => hasVarExp e1 || hasVarExp e2
+  | .idxE e1 e2 => hasVarExp e1 || hasVarExp e2
+  | .sliceE e1 e2 e3 => hasVarExp e1 || hasVarExp e2 || hasVarExp e3
+  | .ifE e1 e2 e3 => hasVarExp e1 || hasVarExp e2 || hasVarExp e3
+  | .updE e1 _ e2 => hasVarExp e1 || hasVarExp e2
+  | .extE e1 _ e2 => hasVarExp e1 || hasVarExp e2
+  | .tupE es => es.attach.any (fun ⟨e1, _⟩ => hasVarExp e1)
+  | .listE es => es.attach.any (fun ⟨e1, _⟩ => hasVarExp e1)
+  | .optE none => false
+  | .optE (some e1) => hasVarExp e1
+  | .strE efs =>
+    efs.attach.any (fun ⟨f, _⟩ => match f with | .mk _ e1 => hasVarExp e1)
+  | .callE _ args => args.attach.any (fun ⟨a, _⟩ => match a with
+      | .expA e1 => hasVarExp e1
+      | _ => false)
+  | .iterE e1 (.mk _ xes) =>
+    hasVarExp e1 || xes.attach.any (fun ⟨d, _⟩ => match d with
+      | .mk _ ex => hasVarExp ex)
+  termination_by it => 2 * sizeOf it + 1
+  decreasing_by
+    all_goals simp_wf
+    all_goals first
+      | omega
+      | (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; omega)
+      | (rename_i hmem; have := List.sizeOf_lt_of_mem hmem; simp at this; omega)
+end
+
+def hasVarPrem : Prem → Bool
+  | .rulePr _ _ _ e => hasVarExp e
+  | .ifPr e => hasVarExp e
+  | .elsePr => false
+  | .letPr _ e1 e2 => hasVarExp e1 || hasVarExp e2
+  | .iterPr p _ => hasVarPrem p
+  | .negPr p => hasVarPrem p
 
 /-- Fail-closed pre-check: real arithmetic unsupported (header). -/
 def checkNoReal (n : Num) : EvalM Unit :=
@@ -283,7 +375,14 @@ def asVariantTyp (env : Env) (fuel : Nat) (t : Typ) : EvalM (List TypCase) :=
 def reduceExp (env : Env) (fuel : Nat) (e : Exp) : EvalM Exp :=
   match fuel with
   | 0 => throw .fuel
-  | n+1 =>
+  | n+1 => do
+    -- PERF DIVERGENCE (logged, arc-2 stage 7): eval.ml re-checks case
+    -- premises on EVERY reduce of every CaseE (eval.ml:387-393) — fine
+    -- for middlend-sized terms, quadratic on value-sized terms (stores,
+    -- names). Fully-normal expressions are returned as-is; the skipped
+    -- effect is the Irred side-channel for ill-formed-but-normal case
+    -- values, which well-typed closed execution does not produce.
+    if isPureNormalExp e then pure e else
     match e.it with
     | .varE _ | .boolE _ | .numE _ | .textE _ => pure e
     | .unE op ot e1 => do
@@ -435,10 +534,20 @@ def reduceExp (env : Env) (fuel : Nat) (e : Exp) : EvalM Exp :=
       let (_, _, clauses) ← match env.findDef? x with
         | some d => pure d
         | none => err s!"undeclared definition `{x}`"
-      -- flag=true: an empty clause list falls through to the None case
-      match ← reduceExpCall env n x args' clauses with
-      | none => pure (withNote (.callE x args') e)
-      | some e' => pure e'
+      -- memoized (see Fresh.St.callCache)
+      let key := (x, args')
+      match (← get).callCache.get? key with
+      | some cached =>
+        match cached with
+        | none => pure (withNote (.callE x args') e)
+        | some e' => pure e'
+      | none => do
+        -- flag=true: an empty clause list falls through to the None case
+        let r ← reduceExpCall env n x args' clauses
+        modify (fun st => { st with callCache := st.callCache.insert key r })
+        match r with
+        | none => pure (withNote (.callE x args') e)
+        | some e' => pure e'
     | .iterE e1 (.mk iter xes) => do
       let e1' ← reduceExp env n e1
       let iter' ← reduceIter env n iter
@@ -459,7 +568,15 @@ def reduceExp (env : Env) (fuel : Nat) (e : Exp) : EvalM Exp :=
             let es1' := eos'.filterMap id
             let s := (ids.zip es1').foldl
               (fun s (x, ex) => Subst.addVarid s x ex) Subst.empty
-            reduceExp env n (← liftS (Subst.substExpOpt s e1'))
+            let body ← reduceExp env n (← liftS (Subst.substExpOpt s e1'))
+            -- DELIBERATE DIVERGENCE from eval.ml:318-321, which returns
+            -- the bare substituted body — element-typed where the IterE
+            -- is opt-typed. That ill-typed form breaks later opt-pattern
+            -- matching and TheE reduction; latent upstream (eval.ml never
+            -- evaluates value-building clauses — il2al takes over there).
+            -- We keep the value type-correct: wrap in `OptE (Some …)`.
+            -- Candidate upstream report (TODO.md).
+            pure (withNote (.optE (some body)) e)
           else
             pure (withNote (.iterE e1' (.mk iter' xes')) e)
         | .list | .list1 => do
@@ -532,7 +649,7 @@ def reduceExp (env : Env) (fuel : Nat) (e : Exp) : EvalM Exp :=
       let tcs ← asVariantTyp env n e.note
       let (_, _, prems) ← findTypcase tcs op
       match ← reducePrems env n Subst.empty prems with
-      | some false => throw .irred
+      | .no => throw .irred
       | _ => pure (withNote (.caseE op e1') e)
     | .cvtE e1 nt1 nt2 => do
       if nt1 == .real || nt2 == .real then
@@ -607,7 +724,7 @@ def reduceExpfield (env : Env) (fuel : Nat) (tfs : List TypField)
       let e' ← reduceExp env n e
       let (_, _, prems) ← findTypfield tfs atom
       match ← reducePrems env n Subst.empty prems with
-      | some false => throw .irred
+      | .no => throw .irred
       | _ => pure (.mk atom e')
 
 /-- eval.ml:458-498 `reduce_path` (continuation-passing, like OCaml). -/
@@ -678,7 +795,8 @@ def reduceExpCall (env : Env) (fuel : Nat) (x : Id) (args : List Arg) :
   | 0 => throw .fuel
   | n+1 =>
     match clauses with
-    | [] => pure none
+    | [] =>
+      pure none
     | .mk _ _ args' body prems :: clauses' =>
       catchIrred
         (do
@@ -687,27 +805,47 @@ def reduceExpCall (env : Env) (fuel : Nat) (x : Id) (args : List Arg) :
           | none => reduceExpCall env n x args clauses'
           | some s =>
             match ← reducePrems env n s prems with
-            | none => pure none
-            | some false => reduceExpCall env n x args clauses'
-            | some true => do
-              pure (some (← reduceExp env n (← liftS (Subst.substExpOpt s body)))))
+            | .unknown =>
+              pure none
+            | .no => reduceExpCall env n x args clauses'
+            | .yes s'' => do
+              -- body substituted with arg AND premise bindings (see
+              -- reducePrems divergence note)
+              pure (some (← reduceExp env n (← liftS (Subst.substExpOpt s'' body)))))
         (fun _ => reduceExpCall env n x args clauses')
 
-/-- eval.ml:533-539 `reduce_prems` (returns `bool option`: the
-accumulated substitution is internal). -/
-def reducePrems (env : Env) (fuel : Nat) (s : Subst) :
-    List Prem → EvalM (Option Bool) :=
-  fun prems =>
+/-- eval.ml:533-539 `reduce_prems`. DIVERGENCE (logged, necessity):
+upstream returns only `bool option` and reduce_exp_call substitutes the
+clause body with the ARGUMENT bindings alone (eval.ml:531) — premise
+`let`-bindings never reach the body, which is inadequate for let-premised
+clauses (`$instantiate`, allocators…; the middlend never evaluates such
+functions, so upstream never hits this — candidate upstream report). We
+return the accumulated substitution so callers can substitute bodies
+correctly. -/
+def reducePrems (env : Env) (fuel : Nat) (s : Subst)
+    (prems : List Prem) (deferred : List Prem := [])
+    (prog : Bool := false) : EvalM PremRes :=
   match fuel with
   | 0 => throw .fuel
   | n+1 =>
     match prems with
-    | [] => pure (some true)
+    | [] =>
+      -- WORKLIST DEFERRAL (mirrors Rel.checkPrems; see its doc): an
+      -- undecidable premise still carrying free variables is retried
+      -- after later premises extend the substitution ($allocmodule's
+      -- forward guess, 4.4-execution.modules.spectec:121-133)
+      if deferred.isEmpty then pure (.yes s)
+      else if prog then reducePrems env n s deferred [] false
+      else pure .unknown
     | prem :: prems' => do
-      match ← reducePrem env n (← liftS (Subst.substPrem s prem)) with
-      | .yes s' => reducePrems env n (Subst.union s s') prems'
-      | .no => pure (some false)
-      | .unknown => pure none
+      let premS ← liftS (Subst.substPrem s prem)
+      match ← reducePrem env n premS with
+      | .yes s' => reducePrems env n (Subst.union s s') prems' deferred true
+      | .no => pure .no
+      | .unknown =>
+        if hasVarPrem premS then
+          reducePrems env n s prems' (deferred ++ [prem]) prog
+        else pure .unknown
 
 /-- eval.ml:541-671 `reduce_prem`. -/
 def reducePrem (env : Env) (fuel : Nat) (prem : Prem) : EvalM PremRes :=
@@ -719,7 +857,29 @@ def reducePrem (env : Env) (fuel : Nat) (prem : Prem) : EvalM PremRes :=
     | .ifPr e => do
       match (← reduceExp env n e).it with
       | .boolE b => pure (if b then .yes Subst.empty else .no)
-      | _ => pure .unknown
+      | _ =>
+        -- binding-if equations (`-- if x* = $f(…)`, `-- if type = TYPE
+        -- rectype`): the middlend rewrites these to `let` before AL
+        -- (il2al); our raw IL keeps them, so an undecidable equality is
+        -- executed as a pattern match, either orientation (engine-level
+        -- rule, same as Rel.checkPrems; logged)
+        match e.it with
+        | .cmpE .eq _ a b => do
+          -- ground solutions only: bindings still carrying free vars
+          -- must wait for the defining premises (worklist deferral)
+          let ground := fun (s' : Subst) =>
+            s'.varid.entries.all (fun p => !hasVarExp p.2)
+          let r1 ← catchIrred
+            (matchExp env n Subst.empty a b) (fun _ => pure none)
+          match r1 with
+          | some s' => if ground s' then pure (.yes s') else pure .unknown
+          | none => do
+            let r2 ← catchIrred
+              (matchExp env n Subst.empty b a) (fun _ => pure none)
+            match r2 with
+            | some s' => if ground s' then pure (.yes s') else pure .unknown
+            | none => pure .unknown
+        | _ => pure .unknown
     | .elsePr => pure (.yes Subst.empty)
     | .letPr _ e1 e2 =>
       catchIrred
@@ -1209,7 +1369,11 @@ def etaIterExp (env : Env) (fuel : Nat) (e : Exp) :
       let len ← reduceExp env n (Exp.mk (.lenE e) (.numT .nat))
       pure (Exp.mk (.idxE e (.mk (.varE "_i_") (.numT .nat))) t,
             .mk (.listN len (some "_i_")) [])
-    | _ => err "eta_iter_exp: type not an iteration"
+    -- eval.ml:943 `assert false` (unreachable under upstream's oriented
+    -- `let`-matching); our both-orientation binding-eq attempts CAN land
+    -- here with a mismatched pair — throw `.irred` so the enclosing
+    -- catchIrred falls through to the other orientation (engine-level)
+    | _ => throw .irred
 
 /-- eval.ml:948-960 `match_sym`. -/
 def matchSym (env : Env) (fuel : Nat) (s : Subst) (g1 g2 : Sym) :

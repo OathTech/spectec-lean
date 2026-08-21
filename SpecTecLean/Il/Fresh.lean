@@ -1,4 +1,5 @@
 import SpecTecLean.Il.Ast
+import Std.Data.HashMap
 /-!
 Fresh identifier generation, mirroring `deps/spectec/spectec/src/il/fresh.ml`.
 
@@ -14,6 +15,14 @@ this is alpha-variance only.
 
 namespace SpecTecLean.Il.Fresh
 
+/-- Cache payload for `Rel.derive` results (defined here to avoid an
+import cycle; Rel converts to/from its `DeriveRes`). -/
+inductive DeriveResC where
+  | ok (outputs : List Exp)
+  | noRule
+  | stuck (msg : String)
+deriving Inhabited
+
 /-- One counter map per id-space (fresh.ml:5-8). Association list keyed by
 base name (small; deterministic). -/
 structure St where
@@ -21,7 +30,17 @@ structure St where
   varids : List (String × Nat) := []
   defids : List (String × Nat) := []
   gramids : List (String × Nat) := []
-deriving Repr, Inhabited
+  /-- Memo table for `Eval.reduceExpCall` (PERF, semantics-preserving:
+  spec functions are pure and reduction deterministic, so caching
+  (defid, reduced args) → result changes cost only; `.fuel` throws
+  propagate before insertion, so no fuel-truncated result is cached). -/
+  callCache : Std.HashMap (String × List Arg) (Option Exp) := {}
+  /-- Memo for `Rel.derive` (relation, inputs) → result. SOUND: derive
+  is deterministic, and visited-guard refusals prune only cyclic
+  derivations, which can never be required (least fixed point admits
+  cycle-free trees), so the result is independent of the visited set. -/
+  deriveCache : Std.HashMap (String × List Exp) DeriveResC := {}
+deriving Inhabited
 
 /-- Monad-polymorphic so callers can layer errors (e.g. Subst's
 `StateT St (Except String)`). -/

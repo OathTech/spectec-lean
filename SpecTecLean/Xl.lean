@@ -42,7 +42,7 @@ inductive Atom where
   | comma | cat | bar
   | bigAnd | bigOr | bigForall | bigExists | bigAdd | bigMul | bigCat
   | lParen | rParen | lBrack | rBrack | lBrace | rBrace
-deriving Repr, BEq, Inhabited
+deriving Repr, BEq, Inhabited, Hashable
 
 namespace Atom
 
@@ -148,6 +148,6 @@ inductive Mixop where
   | brack (l : Atom) (m : Mixop) (r : Atom)  -- Brack
   | infix (m1 : Mixop) (a : Atom) (m2 : Mixop) -- Infix
   | seq (ms : List Mixop)                    -- Seq
-deriving Repr, BEq, Inhabited
+deriving Repr, BEq, Inhabited, Hashable
 
 end SpecTecLean.Xl
