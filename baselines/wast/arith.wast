@@ -1,0 +1,10 @@
+(module
+  (func (export "div_s") (param i32) (param i32) (result i32) (local.get 0) (local.get 1) (i32.div_s))
+  (func (export "div_u") (param i32) (param i32) (result i32) (local.get 0) (local.get 1) (i32.div_u))
+  (func (export "rem_s") (param i32) (param i32) (result i32) (local.get 0) (local.get 1) (i32.rem_s)))
+(assert_return (invoke "div_s" (i32.const 1) (i32.const 1)) (i32.const 1))
+(assert_return (invoke "div_s" (i32.const 4294967289) (i32.const 3)) (i32.const 4294967294))
+(assert_return (invoke "div_u" (i32.const 7) (i32.const 2)) (i32.const 3))
+(assert_return (invoke "rem_s" (i32.const 4294967289) (i32.const 3)) (i32.const 4294967295))
+(assert_trap (invoke "div_s" (i32.const 1) (i32.const 0)) "integer divide by zero")
+(assert_trap (invoke "div_s" (i32.const 2147483648) (i32.const 4294967295)) "integer overflow")

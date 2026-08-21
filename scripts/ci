@@ -146,5 +146,19 @@ diff artifacts/ci-mini.rows baselines/wast/mini.expected.tsv   || fail "wast pil
 rm -f artifacts/ci-mini.cmds artifacts/ci-mini.rows
 note "wast pilot OK: mini.wast classifications match baseline"
 
+# --- 7b. arithmetic pilot (arc-3a: D4 builtins + numeric spec path) ----
+# Signed div/rem edge cases incl. both trap classes, end-to-end through
+# the spec's bit-level numerics + the native hint(builtin) impls.
+"$SPECTEC" deps/spectec/specification/wasm-3.0/*.spectec \
+  --wast-sexpr baselines/wast/arith.wast -o artifacts/ci-arith.cmds \
+  || fail "OCaml --wast-sexpr driver failed on arith.wast"
+"$BIN" run-wast artifacts/ci-dump.sexpr artifacts/ci-arith.cmds 1000000 20000 2>/dev/null \
+  | sed 's/\t\[[0-9]*ms\]$//' > artifacts/ci-arith.rows \
+  || fail "run-wast failed on arith"
+diff artifacts/ci-arith.rows baselines/wast/arith.expected.tsv \
+  || fail "arith pilot classifications drifted from baselines/wast/arith.expected.tsv"
+rm -f artifacts/ci-arith.cmds artifacts/ci-arith.rows
+note "arith pilot OK: div/rem edge cases match baseline"
+
 rm -f artifacts/ci-dump.sexpr
 echo "ci: GREEN"

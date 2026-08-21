@@ -1023,6 +1023,19 @@ def reducePrem (env : Env) (fuel : Nat) (prem : Prem) : EvalM PremRes :=
     match prem with
     | .rulePr _ _ _ _ => pure .unknown
     | .ifPr e => do
+      -- conjunction split (see Rel.checkPrems' twin note)
+      match e.it with
+      | .binE .and _ a b => do
+        match ← reducePrem env n (.ifPr a) with
+        | .no => pure .no
+        | .unknown => pure .unknown
+        | .yes s1 => do
+          let b' ← liftS (Subst.substExpOpt s1 b)
+          match ← reducePrem env n (.ifPr b') with
+          | .no => pure .no
+          | .unknown => pure .unknown
+          | .yes s2 => pure (.yes (Subst.union s1 s2))
+      | _ =>
       match (← reduceExp env n e).it with
       | .boolE b => pure (if b then .yes Subst.empty else .no)
       | _ =>

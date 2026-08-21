@@ -323,6 +323,16 @@ def checkPrems (env : Env) (fuel : Nat) (assumed : List Id)
           | none => pure .fail
           | some s' => ok s'
       | .ifPr e => do
+        -- CONJUNCTION premises (`-- if A /\ B`): decompose into
+        -- sequential premises so binding equations inside conjuncts
+        -- get the binding treatment (upstream's animation does this
+        -- split; engine rule, arc-3a — bindings flow left to right,
+        -- which is exactly conjunction under the accumulating subst)
+        match e.it with
+        | .binE .and _ a b =>
+          checkPrems env n assumed visited s
+            (.ifPr a :: .ifPr b :: rest) deferred prog
+        | _ =>
         let er ← reduceExpRel env n assumed e
         match er.it with
         | .boolE true => ok s
