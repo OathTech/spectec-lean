@@ -144,6 +144,15 @@ def matchInputDecompK (env : Env) (fuel : Nat) (s : Subst)
       if es1.length == es2.length then
         matchInputsK env n s (es1.zip es2) k
       else pure none
+    -- element-wise decomposition so a nested chain INSIDE a list
+    -- element's case payload is reachable (Step_pure/br-label-zero:
+    -- the val'* val^n (BR l) instr* chain lives inside LABEL_'s
+    -- payload inside the one-element instr list; matchExp''s internal
+    -- listE-listE recursion has no split fallback — arc-3a slice 4)
+    | .listE es1, .listE es2 =>
+      if es1.length == es2.length then
+        matchInputsK env n s (es1.zip es2) k
+      else pure none
     | .listE elems, .catE _ _ =>
       let elemTyp := match concrete.note with
         | .iterT t _ => t
