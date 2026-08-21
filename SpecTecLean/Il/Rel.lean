@@ -46,6 +46,18 @@ def isVarIter : Exp → Bool
   | .mk (.iterE _ (.mk _ _)) _ => true
   | _ => false
 
+/-- Statically-known element count of a FIXED (non-iteration) chain
+component: a `listE` group, possibly behind `subE` wrappers. In
+elaborated IL every literal instruction group in a `cat` chain is a
+listE (audit 2026-08-21 dim2-1/V1: matching them element-wise made
+mid-chain groups — Step_pure/trap-instrs, Step_read/throw_ref-instrs —
+unmatchable). `none` = length not statically determinable; the use site
+FAILS CLOSED on it, never mis-consuming. -/
+def groupLen : Exp → Option Nat
+  | .mk (.listE es) _ => some es.length
+  | .mk (.subE e _ _) _ => groupLen e
+  | _ => none
+
 /-- Head atom of a case expression (through SubE), e.g. "CONST". -/
 def headAtom : Exp → Option String
   | .mk (.subE e _ _) _ => headAtom e
@@ -113,16 +125,19 @@ def matchSeqK (env : Env) (fuel : Nat) (s : Subst) (pats : List Exp)
               | some s' => matchSeqK env n s' ps post elemTyp k)
             (fun _ => pure none))
       else do
-        -- fixed-arity component: consumes exactly one element
-        match elems with
-        | [] => pure none
-        | e0 :: rest => do
+        -- fixed GROUP component: consume exactly its statically-known
+        -- element count and match as a list (see groupLen; fail closed
+        -- when the count is undeterminable)
+        match groupLen p with
+        | none => pure none
+        | some m =>
+          if elems.length < m then pure none else do
           let r ← catchIrred
-            (do matchExp' env n s e0 p)
+            (do matchComponent env n s p (elems.take m) elemTyp)
             (fun _ => pure none)
           match r with
           | none => pure none
-          | some s' => matchSeqK env n s' ps rest elemTyp k
+          | some s' => matchSeqK env n s' ps (elems.drop m) elemTyp k
 
 /-- Match one pattern component against a concrete SUBLIST (as a ListE). -/
 def matchComponent (env : Env) (fuel : Nat) (s : Subst) (p : Exp)
