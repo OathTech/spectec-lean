@@ -198,8 +198,41 @@ def cmdRunWast (specPath cmdsPath : String) (fuel steps : Nat) : IO UInt32 := do
       | .ok v =>
         match (Il.AlDecode.decode env fuel v (.varT "module" [])).run fresh with
         | .ok (modE, st') =>
-          fresh := st'; pendingMod := some modE
-          row := ("module", "defined")
+          fresh := st'
+          -- FAIL CLOSED on declared imports (audit dim2-3/V2): the
+          -- harness has no linker; instantiating with an empty
+          -- externaddr vector mis-indexes exports (a demonstrated
+          -- silent wrong answer). MODULE payload component 1 is the
+          -- import list (2.5-syntax.modules.spectec).
+          match Il.Runner.notationComps modE with
+          | some comps =>
+            match comps[1]? with
+            | some impsE =>
+              -- the component is list(import) — a singleton-case
+              -- notation wrapper around the actual list
+              let inner := match (Il.Runner.stripSub impsE).it with
+                | .caseE _ pl =>
+                  match pl.it with
+                  | .tupE [l] => some (Il.Runner.stripSub l)
+                  | _ => none
+                | .listE es => some (.mk (.listE es) impsE.note)
+                | _ => none
+              match inner with
+              | some (.mk (.listE []) _) =>
+                pendingMod := some modE
+                row := ("module", "defined")
+              | some (.mk (.listE _) _) =>
+                pendingMod := none
+                row := ("unsupported:imports", "no linker in the harness")
+              | _ =>
+                pendingMod := none
+                row := ("error", "module imports component shape")
+            | none =>
+              pendingMod := none
+              row := ("error", "module payload arity")
+          | none =>
+            pendingMod := none
+            row := ("error", "module shape")
         | .error .fuel => row := ("fuel", "")
         | .error e => row := ("error", reprStr e)
     | .node "instance" [] =>
