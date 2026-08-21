@@ -171,9 +171,12 @@ pass.
 - Steady-state `Step` derivation: ~1 s/step (26k reduceExp entries per
   step measured); first Step after instantiation ~27 s (cold caches).
 - nop.wast instantiation: 218 s under the (incorrect) pre-deferral
-  engine; >9 min with the correct ground-binding worklist; the full-file
-  run did not complete in interactive time (left running; results in
-  artifacts/nop.rows when done).
+  engine; >9 min with the correct ground-binding worklist. The full-file
+  run was KILLED after 31 min still inside instantiation at 53 GB RSS
+  (memory grows outside the now-bounded caches — symbolic intermediate
+  terms during premise deferral are the suspect; machine safety on the
+  shared host required the kill). No nop.rows result exists; none is
+  claimed.
 - Unbounded memo caches reached 8+ GB RSS on nop.wast (now epoch-flushed
   at fixed sizes).
 - Extrapolation: 19,841 assertions × (seconds-to-minutes each) plus 97
