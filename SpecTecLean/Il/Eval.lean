@@ -442,12 +442,21 @@ def reduceExp (env : Env) (fuel : Nat) (e : Exp) : EvalM Exp :=
   match fuel with
   | 0 => throw .fuel
   | n+1 => do
-    -- PERF DIVERGENCE (logged, arc-2 stage 7): eval.ml re-checks case
-    -- premises on EVERY reduce of every CaseE (eval.ml:387-393) — fine
-    -- for middlend-sized terms, quadratic on value-sized terms (stores,
-    -- names). Fully-normal expressions are returned as-is; the skipped
-    -- effect is the Irred side-channel for ill-formed-but-normal case
-    -- values, which well-typed closed execution does not produce.
+    -- PERF DIVERGENCE (logged, arc-2 stage 7; rationale corrected per
+    -- audit dim1-3): eval.ml re-checks case premises on EVERY reduce of
+    -- every CaseE (eval.ml:387-393) — fine for middlend-sized terms,
+    -- quadratic on value-sized terms (stores, names). Fully-normal
+    -- expressions are returned as-is. Skipped effects, precisely:
+    -- (1) the typcase premise re-check — which is INERT upstream for
+    -- premise-bearing typcases mentioning variables, because
+    -- eval.ml:390 DISCARDS the typcase quantifiers and line 391
+    -- reduces the premises under Subst.empty, so they can never reach
+    -- `Some false`/Irred (corpus: 56/56 premise-bearing typcases have
+    -- variable-bearing premises); (2) reduce_expfield's field-premise
+    -- check (eval.ml:451-456; corpus: 0 premise-bearing typfields);
+    -- (3) the fail-closed as_variant/as_struct/find_typcase errors
+    -- (eval.ml:129-149) for already-normal terms — an ill-formed
+    -- normal CaseE passes here where OCaml hard-errors.
     if isPureNormalExp e then pure e else
     match e.it with
     | .varE _ | .boolE _ | .numE _ | .textE _ => pure e
@@ -1459,8 +1468,12 @@ def etaIterExp (env : Env) (fuel : Nat) (e : Exp) :
             .mk (.listN len (some "_i_")) [])
     -- eval.ml:943 `assert false` (unreachable under upstream's oriented
     -- `let`-matching); our both-orientation binding-eq attempts CAN land
-    -- here with a mismatched pair — throw `.irred` so the enclosing
-    -- catchIrred falls through to the other orientation (engine-level)
+    -- here with a mismatched pair — throw `.irred` (engine-level).
+    -- BLAST RADIUS (audit dim1-6): `.irred` is caught at THREE sites —
+    -- the binding-eq orientation fallback, reduceExpCall (skips to the
+    -- next CLAUSE), and reduceTypApp (skips to the next instance) — so
+    -- a mis-typed eta-expansion inside clause matching silently skips
+    -- that clause where OCaml would abort.
     | _ => throw .irred
 
 /-- eval.ml:948-960 `match_sym`. -/
