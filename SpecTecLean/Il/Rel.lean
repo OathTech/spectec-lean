@@ -351,6 +351,29 @@ def checkPrems (env : Env) (fuel : Nat) (assumed : List Id)
                   && isNormalExp a && isNormalExp b then
                 pure .fail
               else defer prem'
+        | .memE e1 e2 =>
+          -- MEMBERSHIP-BINDING premise (`-- if c <- $f(…)`): the LHS is
+          -- an UNBOUND output variable drawn from the RHS list — il2al
+          -- animates this upstream; eval.ml's memE row (eval.ml:282-284)
+          -- only decides CLOSED membership. Engine rule (arc-3a,
+          -- logged): with a concrete list RHS, bind the FIRST element
+          -- (ground-gated); empty list = definite fail (the `= eps`
+          -- trap siblings handle that case). Multi-element lists take
+          -- the first element — exact for wasm scalar numerics (result
+          -- lists have ≤1 element); a relation needing genuine
+          -- nondeterministic choice here would need continuation-style
+          -- enumeration (recorded limitation).
+          match e1.it, e2.it with
+          | .varE _, .listE [] => pure .fail
+          | .varE _, .listE (h :: _) => do
+            let r ← catchIrred
+              (matchExp env n Subst.empty h e1) (fun _ => pure none)
+            match r with
+            | some s' =>
+              if s'.varid.entries.all (fun p => !hasVarExp p.2)
+              then ok (Subst.union s s') else defer prem'
+            | none => defer prem'
+          | _, _ => defer prem'
         | _ => defer prem'
       | .elsePr => ok s
       | .letPr _ e1 e2 => do

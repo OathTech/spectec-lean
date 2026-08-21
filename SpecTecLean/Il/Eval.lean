@@ -971,6 +971,19 @@ def reducePrem (env : Env) (fuel : Nat) (prem : Prem) : EvalM PremRes :=
             match r2 with
             | some s' => if ground s' then pure (.yes s') else pure .unknown
             | none => pure .unknown
+        | .memE e1 e2 =>
+          -- membership-binding premise (see Rel.checkPrems' twin note)
+          match e1.it, e2.it with
+          | .varE _, .listE [] => pure .no
+          | .varE _, .listE (h :: _) => do
+            let r ← catchIrred
+              (matchExp env n Subst.empty h e1) (fun _ => pure none)
+            match r with
+            | some s' =>
+              if s'.varid.entries.all (fun p => !hasVarExp p.2)
+              then pure (.yes s') else pure .unknown
+            | none => pure .unknown
+          | _, _ => pure .unknown
         | _ => pure .unknown
     | .elsePr => pure (.yes Subst.empty)
     | .letPr _ e1 e2 =>
