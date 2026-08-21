@@ -38,13 +38,24 @@ structure St where
   premsUnknown : Bool := false
   /-- Memo table for `Eval.reduceExpCall` (PERF, semantics-preserving:
   spec functions are pure and reduction deterministic, so caching
-  (defid, reduced args) → result changes cost only; `.fuel` throws
-  propagate before insertion, so no fuel-truncated result is cached). -/
-  callCache : Std.HashMap (String × List Arg) (Option Exp) := {}
-  /-- Memo for `Rel.derive` (relation, inputs) → result. SOUND: derive
-  is deterministic, and visited-guard refusals prune only cyclic
-  derivations, which can never be required (least fixed point admits
-  cycle-free trees), so the result is independent of the visited set. -/
+  (defid, reduced args, guardOpenCalls-mode) → result changes cost
+  only; `.fuel` throws propagate before insertion, so no
+  fuel-truncated result is cached). The Bool is `Env.guardOpenCalls`
+  (it changes the CallE row's behavior); the key still assumes ONE Env
+  binding-environment per process — today's CLI runs exactly one
+  command per process (audit dim3-F2: a future multi-command driver
+  must scope or key the cache by Env). Hits skip fresh-counter bumps,
+  so results are a fixed alpha-variant (within the alpha-variance
+  envelope documented in this header) and `.fuel` onset becomes
+  history-dependent (audit dim1-5). -/
+  callCache : Std.HashMap (String × List Arg × Bool) (Option Exp) := {}
+  /-- Memo for `Rel.derive` (relation, inputs) → result. INVARIANT
+  (audit dim3-F1/V10 corrected the earlier visited-independence
+  claim): only computations performed under an EMPTY visited context
+  are inserted — those are refusal-free, so the cached value is the
+  guard-free result and is valid in any later context. Results
+  computed under a non-empty visited set may have consumed path-local
+  cycle refusals transitively and are NOT cached. -/
   deriveCache : Std.HashMap (String × List Exp) DeriveResC := {}
 deriving Inhabited
 

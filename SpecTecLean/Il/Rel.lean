@@ -201,7 +201,16 @@ end
 
 /-- Input arity convention per relation: components before the arrow are
 inputs. Fixed here for the wasm execution relations; extended as the
-harness grows. Fails closed for unknown multi-component relations. -/
+harness grows. Fails closed for unknown multi-component relations.
+
+WARNING (audit dim2-2/V8): before registering a MULTI-OUTPUT
+relation that has a self-subsumption rule (same inputs, different
+output — Ref_ok, Externaddr_ok, Instrs_ok, Instrs_ok2 all have `/sub`
+rules), the visited-guard limitation documented at `derive` must be
+solved; the guard would refuse the subsumption premise and silently
+under-derive (e.g. every ref.test/ref.cast/br_on_cast needing
+subsumption would fall to its otherwise-sibling). The fail-closed
+error below is what currently contains this. -/
 def inputArity (x : Id) (comps : List Exp) : EvalM Nat :=
   if x == "Step" || x == "Step_pure" || x == "Step_read" || x == "Steps"
   then pure 1
@@ -417,11 +426,18 @@ def checkPrems (env : Env) (fuel : Nat) (assumed : List Id)
 
 /-- Derive one step of relation `x` with `k` ground inputs. Rules tried
 in spec order; sequence-split fallback for CatE-chain conclusions.
-`visited` refuses a sub-derivation of the IDENTICAL judgment (relation +
-inputs): least-fixed-point derivability admits no such cycle, so refusal
-is semantically exact — and it is what makes context rules like
-Step/ctxt-instrs (whose Step premise precedes the ≠eps guard) terminate
-on empty sequences. -/
+`visited` refuses a sub-derivation of the IDENTICAL judgment — same
+relation, same `k` INPUT components — which is what makes context rules
+like Step/ctxt-instrs (whose Step premise precedes the ≠eps guard)
+terminate on empty sequences. LIMITATION (audit dim2-2/V8): for
+MULTI-OUTPUT relations this refusal is NOT semantically exact — a
+subsumption rule like Ref_ok/sub (4.1-execution.values.spectec:65-69)
+legitimately derives the same inputs with a DIFFERENT output via a
+same-input premise, which the guard refuses; such relations are
+under-derived. Currently contained: no multi-output self-subsuming
+relation is registered in `inputArity` (it fails closed), and the
+warning there gates future registrations. The guard is a termination
+device, not an exact LFP oracle. -/
 def derive (env : Env) (fuel : Nat) (assumed : List Id)
     (visited : List (Id × List Exp))
     (x : Id) (_mixop : Mixop)
@@ -444,14 +460,20 @@ def derive (env : Env) (fuel : Nat) (assumed : List Id)
     | some (.stuck m) => pure (.stuck m)
     | none => do
       let res ← deriveCore env n assumed visited x _mixop rules ins k
-      let resC : Fresh.DeriveResC := match res with
-        | .ok outs => .ok outs
-        | .noRule => .noRule
-        | .stuck m => .stuck m
-      -- epoch flush bounds memory (see callCache note)
-      modify (fun st =>
-        let dc := if st.deriveCache.size > 100000 then {} else st.deriveCache
-        { st with deriveCache := dc.insert key resC })
+      -- INSERT only refusal-free computations (empty visited context;
+      -- see the invariant at Fresh.St.deriveCache — audit dim3-F1/V10:
+      -- results computed under a non-empty visited set can carry
+      -- transitive cycle-refusal contamination). Lookups above remain
+      -- unconditional: a cached entry is the guard-free result.
+      if visited.isEmpty then
+        let resC : Fresh.DeriveResC := match res with
+          | .ok outs => .ok outs
+          | .noRule => .noRule
+          | .stuck m => .stuck m
+        -- epoch flush bounds memory (see callCache note)
+        modify (fun st =>
+          let dc := if st.deriveCache.size > 100000 then {} else st.deriveCache
+          { st with deriveCache := dc.insert key resC })
       pure res
 
 /-- `sawUnknown`: an earlier rule in this scan had UNDECIDABLE premises.
@@ -634,8 +656,10 @@ def evalCallRelA (env : Env) (fuel : Nat) (assumed : List Id)
       | some d => pure d
       | none => Eval.err s!"undeclared definition {x}"
     let args' ← args.mapM (Eval.reduceArg env n)
-    -- open-arg guard (see Eval.reduceExp CallE row)
-    if args'.any (fun a => match a with
+    -- open-arg guard, EXECUTION-ONLY like the Eval.reduceExp CallE row
+    -- (gated on Env.guardOpenCalls since f0afbcc's scoping; audit
+    -- dim1-7/dim3-F6 caught this copy left unconditional)
+    if env.guardOpenCalls && args'.any (fun a => match a with
         | .expA e1 => Eval.hasVarExp e1
         | _ => false) then
       Eval.err s!"entry call {x}: open arguments"

@@ -614,7 +614,7 @@ def reduceExp (env : Env) (fuel : Nat) (e : Exp) : EvalM Exp :=
         | some d => pure d
         | none => err s!"undeclared definition `{x}`"
       -- memoized (see Fresh.St.callCache)
-      let key := (x, args')
+      let key := (x, args', env.guardOpenCalls)
       match (← get).callCache.get? key with
       | some cached =>
         match cached with
