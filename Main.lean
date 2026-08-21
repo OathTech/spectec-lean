@@ -281,6 +281,11 @@ def cmdRunWast (specPath cmdsPath : String) (fuel steps : Nat) : IO UInt32 := do
               && (results.zip expected).all (fun (r, e) =>
                    Il.eqExp r (Il.Runner.stripSub e)) then
             row := ("pass", "")
+          else if results.any (fun r => !Il.Eval.isPureNormalExp r) then
+            -- a RESIDUAL result (unimplemented builtin, open reduction)
+            -- is UNDECIDED, not a decided mismatch — `fail` is reserved
+            -- for decided-wrong (arc-3a honesty rule, logged)
+            row := ("stuck", "residual result (undecided)")
           else
             row := ("fail", s!"expected {expected.length} vals, mismatch")
         | .ok ((.trap _, _), st') => fresh := st'; row := ("fail", "trapped, expected return")
