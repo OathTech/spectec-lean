@@ -1,4 +1,4 @@
-# Arc 3b: il2al compiler port, stage 1 — DRAFT (awaiting blessing)
+# Arc 3b: il2al compiler port, stage 1 — BLESSED 2026-08-21
 
 Branch: `arc3b-il2al-stage1` (off `main` after arc-2 lands). Lane is
 GREENFIELD-ONLY: new modules under `SpecTecLean/Alir/` (AL AST,

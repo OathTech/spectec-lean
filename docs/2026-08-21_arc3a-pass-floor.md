@@ -1,4 +1,4 @@
-# Arc 3a: the pass floor, rule-direct — DRAFT (awaiting blessing)
+# Arc 3a: the pass floor, rule-direct — BLESSED 2026-08-21
 
 Branch: `arc3a-pass-floor` (off `main` after arc-2 lands). Lane owns
 `SpecTecLean/Il/*`, `SpecTecLean/Runner.lean`, `SpecTecLean/Al.lean`,
