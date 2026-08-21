@@ -1,0 +1,28 @@
+# Pinned AL algorithms (oracle output; arc-3b stage 1)
+# Generated: deps/spectec/spectec/spectec ../specification/wasm-3.0/*.spectec --print-al
+# spectec @ acc6e834ff403c82554d081237f327346190ad96 + vendored patches/
+
+Step_pure/unreachable {
+ Trap
+}
+Step_pure/nop {
+ Nop
+}
+Step_pure/drop {
+ Assert (top_value())
+ Pop val
+}
+Step_pure/select t*{t <- t*}?{t* <- t*?} {
+ Assert (top_value(I32))
+ Pop (I32.CONST c)
+ Assert (top_value())
+ Pop val_2
+ Assert (top_value())
+ Pop val_1
+ If ((c =/= 0)) {
+   Push val_1
+ }
+ Else {
+   Push val_2
+ }
+}
