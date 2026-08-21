@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Arc-3b lane gate (additive; does not touch scripts/ci).
+# Steps: capped build of the Alir lib + harness exe; hygiene grep over
+# the lane's modules (superset pattern incl. unsafe/implemented_by);
+# the 24-case agreement harness against a fresh oracle dump (exit
+# status checked DIRECTLY — the arc-2 pipe-masking incident applies).
+# NOTE: the harness step takes ~10 min (rule-direct engine side).
+set -uo pipefail
+cd "$(dirname "$0")/.."
+fail() { echo "ci-alir: FAIL — $*" >&2; exit 1; }
+note() { echo "ci-alir: $*"; }
+source scripts/env.sh
+
+SPECTEC_MEM_MAX="${SPECTEC_MEM_MAX:-32G}" scripts/capped \
+  lake build SpecTecLeanAlir aliragree
+[ $? -eq 0 ] || fail "lake build failed"
+note "build OK"
+
+if grep -rnE '(^|[^[:alnum:]_])(partial[[:space:]]+def|sorry|native_decide|unsafe|implemented_by)([^[:alnum:]_]|$)|set_option[[:space:]]+(maxHeartbeats|maxRecDepth)' \
+     --include='*.lean' SpecTecLean/Alir/; then
+  fail "forbidden construct in SpecTecLean/Alir/"
+fi
+note "hygiene OK"
+
+SPECTEC=deps/spectec/spectec/spectec
+[ -x "$SPECTEC" ] || fail "$SPECTEC not built"
+mkdir -p artifacts
+[ -s artifacts/ci-alir-dump.sexpr ] || \
+  "$SPECTEC" deps/spectec/specification/wasm-3.0/*.spectec \
+    --ast-structured -o artifacts/ci-alir-dump.sexpr \
+  || fail "oracle dump failed"
+
+./.lake/build/bin/aliragree artifacts/ci-alir-dump.sexpr
+rc=$?
+[ $rc -eq 0 ] || fail "agreement harness non-agree (exit $rc)"
+note "agreement OK (24/24)"
+echo "ci-alir: GREEN"
