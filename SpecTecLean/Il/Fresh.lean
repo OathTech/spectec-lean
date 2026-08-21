@@ -57,6 +57,17 @@ structure St where
   computed under a non-empty visited set may have consumed path-local
   cycle refusals transitively and are NOT cached. -/
   deriveCache : Std.HashMap (String × List Exp) DeriveResC := {}
+  /-- OPAQUE-VALUE TABLE (arc-3a store indirection; generic — nothing
+  wasm-specific). A handle `caseE %OPAQUE (numE gen)` stands for
+  `opaqueTab[gen]`, an immutable inline snapshot. The engine intercepts
+  exactly dotE/updE/extE on handles (Eval.reduceExp); every other
+  structural observation of a handle FAILS CLOSED (no reduce row, no
+  match row — the %OPAQUE mixop equals no spec mixop), so a handle-run
+  can differ from an inline-run only by getting visibly stuck, never by
+  answering differently (bisimilarity note: docs/2026-08-21_arc3a-
+  store-indirection.md). Entries are append-only within a run and share
+  structure persistently. -/
+  opaqueTab : Array Exp := #[]
 deriving Inhabited
 
 /-- Monad-polymorphic so callers can layer errors (e.g. Subst's

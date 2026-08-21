@@ -171,7 +171,8 @@ def cmdRunWast (specPath cmdsPath : String) (fuel steps : Nat) : IO UInt32 := do
   let valHeads ← match (Il.Runner.variantHeads env fuel (.varT "val" [])).run fresh with
     | .ok (h, st') => fresh := st'; pure h
     | .error e => IO.eprintln s!"valHeads: {reprStr e}"; return 2
-  let store0 ← match (Il.Runner.emptyStore env fuel).run fresh with
+  let store0 ← match ((Il.Runner.emptyStore env fuel) >>=
+      Il.Eval.mkOpaque).run fresh with
     | .ok (s, st') => fresh := st'; pure s
     | .error e => IO.eprintln s!"store init: {reprStr e}"; return 2
   let mut st : Il.Runner.St := { store := store0, modinst := none }

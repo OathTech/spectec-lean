@@ -73,6 +73,36 @@ def catchIrredFailure (m : EvalM α) (h : Unit → EvalM α) : EvalM α :=
 
 def err (msg : String) : EvalM α := throw (.error msg)
 
+/-! ### Opaque-value handles (arc-3a store indirection; generic)
+
+`caseE %OPAQUE (numE gen)` stands for `Fresh.St.opaqueTab[gen]`. The
+atom "%OPAQUE" cannot originate from a spec dump (spectec atom syntax
+has no '%'), so handles collide with nothing: unintercepted structural
+use fails closed (visible stuck), never silently misreads. See the
+bisimilarity note in docs/2026-08-21_arc3a-store-indirection.md. -/
+
+def opaqueAtom : Atom := .atom "%OPAQUE"
+
+/-- Wrap a value into a fresh handle of the same note. -/
+def mkOpaque (v : Exp) : EvalM Exp := do
+  let gen := (← get).opaqueTab.size
+  modify (fun st => { st with opaqueTab := st.opaqueTab.push v })
+  pure (.mk (.caseE (.atom opaqueAtom) (.mk (.numE (.nat gen)) (.numT .nat)))
+        v.note)
+
+/-- Handle detection: the generation index, if `e` is a handle. -/
+def isOpaque? (e : Exp) : Option Nat :=
+  match e.it with
+  | .caseE (.atom a) (.mk (.numE (.nat gen)) _) =>
+    if eqAtom a opaqueAtom then some gen else none
+  | _ => none
+
+/-- Fetch a handle's current snapshot (engine invariant: gen < size). -/
+def getOpaque (gen : Nat) : EvalM Exp := do
+  match (← get).opaqueTab[gen]? with
+  | some v => pure v
+  | none => throw (.failure s!"opaque handle {gen} out of range")
+
 /-- eval.ml:28 `unordered`. -/
 def unordered (s1 s2 : IdSet) : Bool :=
   !(IdSet.subset s1 s2 || IdSet.subset s2 s1)
@@ -526,6 +556,17 @@ def reduceExp (env : Env) (fuel : Nat) (e : Exp) : EvalM Exp :=
     | .updE e1 p e2 => do
       let e1' ← reduceExp env n e1
       let e2' ← reduceExp env n e2
+      -- opaque-handle interception: update the snapshot, mint a new
+      -- handle (append-only generations; persistent sharing)
+      match isOpaque? e1' with
+      | some gen => do
+        let v ← getOpaque gen
+        let v' ← reducePath env n v p (fun e' p' =>
+          match p'.it with
+          | .rootP => pure e2'
+          | _ => pure (withNote (.updE e' p' e2') e'))
+        mkOpaque v'
+      | none =>
       reducePath env n e1' p (fun e' p' =>
         match p'.it with
         | .rootP => pure e2'
@@ -533,6 +574,15 @@ def reduceExp (env : Env) (fuel : Nat) (e : Exp) : EvalM Exp :=
     | .extE e1 p e2 => do
       let e1' ← reduceExp env n e1
       let e2' ← reduceExp env n e2
+      match isOpaque? e1' with
+      | some gen => do
+        let v ← getOpaque gen
+        let v' ← reducePath env n v p (fun e' p' =>
+          match p'.it with
+          | .rootP => reduceExp env n (withNote (.catE e' e2') e')
+          | _ => pure (withNote (.extE e' p' e2') e'))
+        mkOpaque v'
+      | none =>
       reducePath env n e1' p (fun e' p' =>
         match p'.it with
         | .rootP => reduceExp env n (withNote (.catE e' e2') e')
@@ -543,6 +593,11 @@ def reduceExp (env : Env) (fuel : Nat) (e : Exp) : EvalM Exp :=
       pure (withNote (.strE efs') e)
     | .dotE e1 atom => do
       let e1' ← reduceExp env n e1
+      -- opaque-handle interception: project on the snapshot (O(1) —
+      -- strE field access returns the shared object)
+      let e1' ← match isOpaque? e1' with
+        | some gen => getOpaque gen
+        | none => pure e1'
       match e1'.it with
       | .strE efs =>
         match efs.find? (fun f => match f with | .mk a _ => eqAtom a atom) with
@@ -552,6 +607,23 @@ def reduceExp (env : Env) (fuel : Nat) (e : Exp) : EvalM Exp :=
     | .compE e1 e2 => do
       let e1' ← reduceExp env n e1
       let e2' ← reduceExp env n e2
+      -- opaque-handle interception: compose on the snapshot(s), mint a
+      -- new handle when either side was opaque
+      match isOpaque? e1', isOpaque? e2' with
+      | some g1, some g2 => do
+        let v1 ← getOpaque g1
+        let v2 ← getOpaque g2
+        let r ← reduceExp env n (withNote (.compE v1 v2) e)
+        mkOpaque r
+      | some g1, none => do
+        let v1 ← getOpaque g1
+        let r ← reduceExp env n (withNote (.compE v1 e2') e)
+        mkOpaque r
+      | none, some g2 => do
+        let v2 ← getOpaque g2
+        let r ← reduceExp env n (withNote (.compE e1' v2) e)
+        mkOpaque r
+      | none, none =>
       match e1'.it, e2'.it with
       | .listE es1, .listE es2 => pure (withNote (.listE (es1 ++ es2)) e)
       | .optE none, .optE _ => pure (withNote e2'.it e)
