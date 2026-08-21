@@ -157,14 +157,136 @@ index a26937f..51860b2 100644
  val output_exp : out_channel -> Config.t -> Il.Ast.exp -> unit
  val output_def : out_channel -> Config.t -> Il.Ast.def -> unit
 diff --git a/spectec/src/exe-spectec/main.ml b/spectec/src/exe-spectec/main.ml
-index 246a5f9..7ac5c22 100644
+index 246a5f9..223cebc 100644
 --- a/spectec/src/exe-spectec/main.ml
 +++ b/spectec/src/exe-spectec/main.ml
-@@ -195,6 +195,7 @@ let argspec = Arg.align (
+@@ -71,6 +71,107 @@ let pdsts = ref []   (* patch file arguments *)
+ let odsts = ref []   (* output file arguments *)
+ 
+ let ast_width = ref Backend_ast.Config.default.width
++let wast_sexpr_src : string option ref = ref None
++
++(* SPECTEC-LEAN PATCH stage 7: wast -> AL-value S-expr command stream.
++ * Reuses the reference interpreter's parser and Construct's AL
++ * conversion; values serialize generically (N/I/B/T/L/S/C/O/U nodes).
++ * Unsupported script constructs emit explicit (unsupported ...) commands
++ * — never silently dropped. *)
++let ws_buf = Buffer.create (1 lsl 16)
++let ws_text t = "\"" ^ String.escaped t ^ "\""
++let rec ws_value v =
++  let open Al.Ast in
++  match v with
++  | NumV (`Nat n) -> "(N " ^ Z.to_string n ^ ")"
++  | NumV (`Int i) -> "(I " ^ (if i >= Z.zero then "+" else "-") ^ Z.to_string (Z.abs i) ^ ")"
++  | NumV _ -> failwith "ws_value: rat/real"
++  | BoolV b -> "(B " ^ Bool.to_string b ^ ")"
++  | TextV t -> "(T " ^ ws_text t ^ ")"
++  | ListV arr -> "(L" ^ Array.fold_left (fun acc v -> acc ^ " " ^ ws_value v) "" !arr ^ ")"
++  | StrV fields -> "(S" ^ List.fold_left (fun acc (k, vr) -> acc ^ " (F " ^ ws_text k ^ " " ^ ws_value !vr ^ ")") "" fields ^ ")"
++  | CaseV (id, args) -> "(C " ^ ws_text id ^ List.fold_left (fun acc v -> acc ^ " " ^ ws_value v) "" args ^ ")"
++  | OptV None -> "(O)"
++  | OptV (Some v) -> "(O " ^ ws_value v ^ ")"
++  | TupV vs -> "(U" ^ List.fold_left (fun acc v -> acc ^ " " ^ ws_value v) "" vs ^ ")"
++  | FnameV _ -> failwith "ws_value: fname"
++
++let ws_emit s = Buffer.add_string ws_buf s; Buffer.add_string ws_buf "\n"
++
++let ws_unsupported cls detail =
++  ws_emit ("(unsupported " ^ ws_text cls ^ " " ^ ws_text detail ^ ")")
++
++let run_wast_sexpr src dst =
++  let open Reference_interpreter in
++  let open Script in
++  let script = Parse.Script.parse_file src in
++  let module_of_def def =
++    match def.Source.it with
++    | Textual (m, _) -> m
++    | Encoded (name, bs) -> Decode.decode name bs.Source.it
++    | Quoted (_, s) -> (match (snd (Parse.Module.parse_string s.Source.it)).Source.it with
++      | Script.Textual (m, _) -> m
++      | _ -> failwith "quoted")
++  in
++  let ws_action act =
++    match act.Source.it with
++    | Invoke (None, name, args) ->
++      let vals = List.map (fun (a : Script.literal) ->
++        match a.Source.it with
++        | Script.ValLit v -> Backend_interpreter.Construct.al_of_value v
++        | Script.NullLit _ -> failwith "null arg") args
++      in
++      Some ("(act invoke " ^ ws_text (Utf8.encode name) ^ " (L" ^
++        List.fold_left (fun acc v -> acc ^ " " ^ ws_value v) "" vals ^ "))")
++    | Invoke (Some _, _, _) -> None
++    | Get _ -> None
++  in
++  let ws_result (r : Script.result) =
++    match r.Source.it with
++    | NumResult (NumPat n) -> Some (ws_value (Backend_interpreter.Construct.al_of_value (Value.Num n.Source.it)))
++    | RefResult (RefPat r') ->
++      (try Some (ws_value (Backend_interpreter.Construct.al_of_value (Value.Ref r'.Source.it))) with _ -> None)
++    | _ -> None  (* NaN patterns, vectors *)
++  in
++  List.iter (fun cmd ->
++    match cmd.Source.it with
++    | Module (None, def) ->
++      (try ws_emit ("(mod " ^ ws_value (Backend_interpreter.Construct.al_of_module (module_of_def def)) ^ ")")
++       with e -> ws_unsupported "module-convert" (Printexc.to_string e))
++    | Module (Some _, _) -> ws_unsupported "named-module" ""
++    (* Wasm 3.0 script AST: toplevel (module ...) desugars to Module
++       (define) + Instance (instantiate); anonymous Instance instantiates
++       the most recent anonymous module. *)
++    | Instance (None, None) -> ws_emit "(instance)"
++    | Instance _ -> ws_unsupported "named-instance" ""
++    | Register _ -> ws_unsupported "register" ""
++    | Action act ->
++      (match ws_action act with
++       | Some a -> ws_emit ("(do " ^ a ^ ")")
++       | None -> ws_unsupported "action" "")
++    | Assertion {it = AssertReturn (act, results); _} ->
++      (match ws_action act, List.map ws_result results with
++       | Some a, rs when List.for_all Option.is_some rs ->
++         ws_emit ("(assert_return " ^ a ^ " (L" ^
++           List.fold_left (fun acc r -> acc ^ " " ^ Option.get r) "" rs ^ "))")
++       | _ -> ws_unsupported "assert_return-pattern" "")
++    | Assertion {it = AssertTrap (act, msg); _} ->
++      (match ws_action act with
++       | Some a -> ws_emit ("(assert_trap " ^ a ^ " " ^ ws_text msg ^ ")")
++       | None -> ws_unsupported "assert_trap-action" "")
++    | Assertion {it = AssertMalformed _; _}
++    | Assertion {it = AssertMalformedCustom _; _} -> ws_unsupported "assert_malformed" "text/binary parsing is harness boundary"
++    | Assertion {it = AssertInvalidCustom _; _} -> ws_unsupported "assert_invalid" ""
++    | Assertion {it = AssertInvalid _; _} -> ws_unsupported "assert_invalid" ""
++    | Assertion {it = AssertUninstantiable _; _} -> ws_unsupported "assert_uninstantiable" ""
++    | Assertion {it = AssertUnlinkable _; _} -> ws_unsupported "assert_unlinkable" ""
++    | Assertion {it = AssertException _; _} -> ws_unsupported "assert_exception" ""
++    | Assertion {it = AssertExhaustion _; _} -> ws_unsupported "assert_exhaustion" "fuel semantics"
++    | Meta _ -> ws_unsupported "meta" ""
++  ) script;
++  let oc = open_out dst in
++  Buffer.output_buffer oc ws_buf;
++  close_out oc
+ let latex_macros = ref false
+ 
+ let print_el = ref false
+@@ -195,6 +296,8 @@ let argspec = Arg.align (
  
    "--check", Arg.Unit (fun () -> target := Check), " Check only (default)";
    "--ast", Arg.Unit (fun () -> target := Ast), " Generate AST";
 +  "--ast-structured", Arg.Unit (fun () -> target := Ast; Backend_ast.Print.structured := true), " Generate AST (structured lossless encoding; spectec-lean patch D3)";
++  "--wast-sexpr", Arg.String (fun s -> wast_sexpr_src := Some s), " Convert a .wast script to an AL-value S-expr command stream (spectec-lean patch, stage 7)";
    "--latex", Arg.Unit (fun () -> target := Latex), " Generate Latex";
    "--splice-latex", Arg.Unit (fun () -> target := Splice Backend_splice.Config.latex),
      " Splice Sphinx";
+@@ -311,6 +414,12 @@ let () =
+     Al.Valid.valid al;
+     *)
+ 
++    (match !wast_sexpr_src with
++    | Some src ->
++      (match !odsts with
++      | [odst] -> run_wast_sexpr src odst; exit 0
++      | _ -> cmd_error "--wast-sexpr needs exactly one -o output")
++    | None -> ());
+     (match !target with
+     | Check -> ()
+ 
