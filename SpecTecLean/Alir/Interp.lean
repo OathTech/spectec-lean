@@ -70,9 +70,9 @@ open AlM (get set)
 def err {α} (msg : String) : AlM α := throw (.error msg)
 
 /-- Environment (ds.ml `Env` — string map; assoc list mirror). -/
-abbrev Env := List (AlId × Value)
+abbrev AlEnv := List (AlId × Value)
 
-def lookupEnv (env : Env) (x : AlId) : AlM Value :=
+def lookupEnv (env : AlEnv) (x : AlId) : AlM Value :=
   match env.lookup x with
   | some v => pure v
   | none => err s!"free variable {x}"
@@ -136,7 +136,7 @@ def numCmp (op : BinOp) (n1 n2 : Num) : AlM Value := do
 mutual
 /-- interpreter.ml:213-453 `eval_expr` — stage-1 rows only, cited per
 row; everything else is a loud error. -/
-def evalExpr (fuel : Nat) (env : Env) (e : Expr) : AlM Value :=
+def evalExpr (fuel : Nat) (env : AlEnv) (e : Expr) : AlM Value :=
   match fuel with
   | 0 => throw .fuel
   | n+1 =>
@@ -215,8 +215,8 @@ end
 
 /-- interpreter.ml:468-538 `assign` — stage-1 rows, cited; fail-closed
 rest. Returns the extended environment. -/
-def assign (fuel : Nat) (lhs : Expr) (rhs : Value) (env : Env) :
-    AlM Env :=
+def assign (fuel : Nat) (lhs : Expr) (rhs : Value) (env : AlEnv) :
+    AlM AlEnv :=
   match fuel with
   | 0 => throw .fuel
   | n+1 =>
@@ -262,8 +262,8 @@ def assign (fuel : Nat) (lhs : Expr) (rhs : Value) (env : Env) :
     | _, _ => err "assign row outside stage-1 fragment (fail-closed)"
 
 /-- interpreter.ml:571-575 `assign_param`. -/
-def assignParam (fuel : Nat) (p : Arg) (v : Value) (env : Env) :
-    AlM Env :=
+def assignParam (fuel : Nat) (p : Arg) (v : Value) (env : AlEnv) :
+    AlM AlEnv :=
   match p with
   | .expA e => assign fuel e v env
   | .typA _ => err "TypA param (interpreter.ml:574 assert false)"
@@ -277,8 +277,8 @@ abbrev Algos := List (String × (List Arg × List Instr))
 mutual
 /-- interpreter.ml:590-719 `step_instr`, direct-recursion form (see
 header divergence note) — stage-1 rows, cited. -/
-def runInstrs (algos : Algos) (fuel : Nat) (env : Env)
-    (il : List Instr) : AlM Env :=
+def runInstrs (algos : Algos) (fuel : Nat) (env : AlEnv)
+    (il : List Instr) : AlM AlEnv :=
   match fuel with
   | 0 => throw .fuel
   | n+1 =>
