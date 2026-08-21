@@ -678,6 +678,10 @@ def reduceExp (env : Env) (fuel : Nat) (e : Exp) : EvalM Exp :=
       pure (withNote (.tupE (← es.mapM (reduceExp env n))) e)
     | .callE x args => do
       let args' ← args.mapM (reduceArg env n)
+      -- D4 extension hook: native builtins (see Env.extCall doc)
+      match env.extCall x args' e.note with
+      | some r => pure r
+      | none =>
       -- OPEN-ARG GUARD (engine-level, logged): under the ground-solution
       -- policy a call result containing free variables is never
       -- accepted (binding-eqs defer instead), so evaluating open-arg

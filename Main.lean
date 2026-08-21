@@ -1,4 +1,5 @@
 import SpecTecLean
+import SpecTecLean.Wasm.Builtins
 
 open SpecTecLean
 
@@ -161,8 +162,11 @@ def cmdRunWast (specPath cmdsPath : String) (fuel steps : Nat) : IO UInt32 := do
   let spec ← match Sexpr.parse specIn >>= (Il.readScript · |>.mapError (⟨0, ·⟩)) with
     | .ok s => pure s
     | .error e => IO.eprintln s!"SPEC LOAD FAIL: {e}"; return 2
-  -- execution-only engine mode (see Env.guardOpenCalls doc)
-  let env := { Il.Env.ofScript spec with guardOpenCalls := true }
+  -- execution-only engine mode (see Env.guardOpenCalls doc) + native
+  -- builtins (D4 hook; SpecTecLean/Wasm/Builtins.lean)
+  let env := { Il.Env.ofScript spec with
+    guardOpenCalls := true,
+    extCall := SpecTecLean.Wasm.Builtins.extCall }
   let cmdsIn ← IO.FS.readBinFile cmdsPath
   let cmds ← match Sexpr.parse cmdsIn with
     | .ok cs => pure cs

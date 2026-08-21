@@ -54,6 +54,17 @@ structure Env where
   eval.ml-mirroring use: eval.ml DOES reduce open-arg calls, and
   valid.ml depends on it (ci caught exactly this, arc-2 stage 7g'). -/
   guardOpenCalls : Bool := false
+  /-- D4 EXTENSION HOOK (charter arc-3a): native implementations for
+  spec functions declared `hint(builtin)` — the spec itself delegates
+  them (their defining equations are commented out upstream;
+  backend-interpreter/interpreter.ml:815 binds them natively). The hook
+  is consulted in reduceExp's CallE row with the REDUCED args and the
+  call's result type; `none` means not-a-builtin or refused (falls
+  through to the ordinary clause path, which for builtins is empty and
+  stays residual — visibly). Language-agnostic: the core knows only the
+  hook; implementations live outside core namespaces and are registered
+  by the harness (Main). -/
+  extCall : Id → List Arg → Typ → Option Exp := fun _ _ _ => none
 deriving Inhabited
 
 namespace Env
