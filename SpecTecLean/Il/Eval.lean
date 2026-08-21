@@ -1260,6 +1260,16 @@ def matchExp' (env : Env) (fuel : Nat) (s : Subst) (e1 e2 : Exp) :
       matchExp' env n s (Exp.mk (.caseE op e1) e21.note) e21
     | _, .projE e21 0 =>  -- only valid on unary tuples (eval.ml:819)
       matchExp' env n s (Exp.mk (.tupE [e1]) e21.note) e21
+    -- ENGINE EXTENSION (arc-3a, deliberate divergence): eval.ml's
+    -- match_exp' has OptE rows only against Opt-ITERATION patterns
+    -- (eval.ml:830-874) — an OptE-vs-OptE pair falls to the head-normal
+    -- fallthrough (None). The row set was designed for middlend usage;
+    -- raw-IL execution needs the structural congruence rows: the
+    -- motivating case is Step_read/local.get's premise
+    -- `$local(z,x) = (opt val)` (4.3-execution.instructions.spectec:303),
+    -- concrete `optE(some v)` vs pattern `optE(some (var val))`.
+    | .optE none, .optE none => pure (some s)
+    | .optE (some e11), .optE (some e21) => matchExp' env n s e11 e21
     | .optE none, .iterE _ (.mk .opt xes) =>
       -- eval.ml:830-834
       xes.foldlM

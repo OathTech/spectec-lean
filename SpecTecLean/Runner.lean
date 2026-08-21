@@ -144,9 +144,16 @@ def runConfig (env : Env) (fuel : Nat) (valHeads : List String) :
 /-- Evaluate a spec entry-point call (relation premises supported). -/
 def evalCall (env : Env) (fuel : Nat) (f : Id) (args : List Exp)
     (retT : Typ) : EvalM Exp := do
-  -- Module_ok/Externaddr_ok: assumed validation boundary (modules come
-  -- from the reference parser; assert_invalid is an unsupported class)
-  Rel.evalCallRel env fuel ["Module_ok", "Externaddr_ok"] f args retT
+  -- Module_ok/Externaddr_ok/Val_ok: assumed validation boundary.
+  -- Modules come from the reference parser (assert_invalid is an
+  -- unsupported class); invoke ARGUMENT VALUES come from the reference
+  -- interpreter's typed Value.t representation (driver:
+  -- Construct.al_of_value), well-typed by construction on the oracle
+  -- side — Val_ok is validation-class, same trust shape as Module_ok.
+  -- Deriving Val_ok in-engine is blocked by two recorded gaps
+  -- (IterPr-over-RulePr unrolling, TODO.md; Ref_ok multi-output
+  -- subsumption, docs/2026-08-21_arc2-audit.md #6). Arc-3a [AGENT].
+  Rel.evalCallRel env fuel ["Module_ok", "Externaddr_ok", "Val_ok"] f args retT
 
 structure St where
   store : Exp
